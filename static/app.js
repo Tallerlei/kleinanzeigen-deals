@@ -151,9 +151,13 @@ function renderListings() {
     const cutoff = maxDays === null ? null : Date.now() - maxDays * 86400000;
     let data = g.listings.filter(l => category === "ALL" || l.category === category);
     if (cutoff !== null) data = data.filter(l => l._seen !== null && l._seen >= cutoff);
+    data.forEach(l => {
+        l._roomLow = l.category === "GPU" && g.pcLowest !== null && g.pcLowest !== undefined ? g.pcLowest - l.price : null;
+        l._roomMedian = l.category === "GPU" && g.pcMedian !== null && g.pcMedian !== undefined ? g.pcMedian - l.price : null;
+    });
     const rows = sortRows(data, listingSort.key, listingSort.dir);
     if (!rows.length) {
-        listingsBody.innerHTML = `<tr><td colspan="5" class="muted empty">No listings first seen in this window \u2014 switch to "All" for the full history.</td></tr>`;
+        listingsBody.innerHTML = `<tr><td colspan="6" class="muted empty">No listings first seen in this window \u2014 switch to "All" for the full history.</td></tr>`;
         return;
     }
     listingsBody.innerHTML = rows.map(l => {
@@ -164,10 +168,14 @@ function renderListings() {
         const isNew = l._seen !== null && l._seen >= newCutoff;
         const newTag = isNew ? ' <span class="tag new">new</span>' : "";
         const badge = `<span class="badge ${l.category === "PC" ? "pc" : "gpu"}">${l.category}</span>`;
+                const room = l.category === "GPU" && l._roomLow !== null
+                        ? `<span class="room ${marginClass(l._roomLow)}"><span class="main">${l._roomLow > 0 ? "+" : ""}${euro(l._roomLow)}</span><span class="sub">vs low${l._roomMedian !== null ? ` / ${l._roomMedian > 0 ? "+" : ""}${euro(l._roomMedian)} vs med` : ""}</span></span>`
+                        : '<span class="muted">market ref</span>';
         return `<tr>
       <td>${badge}</td>
       <td>${link}${vb}${newTag}</td>
       <td class="num">${euro(l.price)}</td>
+            <td class="num">${room}</td>
       <td class="datecell">${l.date && l.date !== "N/A" ? l.date : ""} ${ageLabel(l._ts)}</td>
       <td>${l.city || ""}</td>
     </tr>`;
