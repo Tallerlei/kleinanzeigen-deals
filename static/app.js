@@ -25,8 +25,23 @@ function ageLabel(ts) {
     return `<span class="age ${cls}">${txt}</span>`;
 }
 
-// Precompute a sortable timestamp per listing so the Date column ranks by recency.
-gpus.forEach(g => (g.listings || []).forEach(l => { l._ts = parseDMY(l.date); }));
+// Precompute a sortable timestamp per listing so the Date column ranks by recency,
+// plus a "first seen" epoch used to surface only newly-appeared deals. Until the
+// scraper has stamped First Seen, fall back to the posting date so "New" still works.
+gpus.forEach(g => (g.listings || []).forEach(l => {
+    l._ts = parseDMY(l.date);
+    const fs = parseDMY(l.firstSeen);
+    l._seen = fs !== null ? fs : l._ts;
+}));
+
+const NEW_DAYS = 3;   // "New" = first recorded within this many days
+const WEEK_DAYS = 7;
+const newCutoff = Date.now() - NEW_DAYS * 86400000;
+// Count freshly-seen GPU deals per model so the overview flags where to look.
+gpus.forEach(g => {
+    g._newGpu = (g.listings || []).filter(
+        l => l.category === "GPU" && l._seen !== null && l._seen >= newCutoff).length;
+});
 
 // Small inline SVG sparkline of a numeric series.
 function sparkline(values, w = 80, h = 22) {
@@ -46,6 +61,7 @@ let overviewSort = { key: "margin", dir: -1 };
 let selected = null;
 let listingSort = { key: "price", dir: 1 };
 let category = "ALL";
+let ageFilter = "new";   // new | week | all
 
 // Market depth per side: few comparable ads -> fragile lowest price / margin.
 function depthClass(n) {
@@ -84,7 +100,7 @@ function renderOverview() {
       <td class="num">${euro(g.pcLowest)}${med(g.pcMedian)}</td>
       <td class="num ${marginClass(g.margin)}">${euro(g.margin)}${warn}${med(g.medianMargin)}</td>
       <td class="num trend">${spark}${delta}</td>
-      <td class="num depth ${depthClass(g.gpuCount)}">${g.gpuCount}</td>
+      <td class="num depth ${depthClass(g.gpuCount)}">${g.gpuCount}${g._newGpu ? ` <span class="newpill" title="${g._newGpu} new GPU listing(s) in the last ${NEW_DAYS} days">+${g._newGpu}</span>` : ""}</td>
       <td class="num depth ${depthClass(g.pcCount)}">${g.pcCount}</td>
     </tr>`;
     }).join("");
@@ -131,19 +147,26 @@ function renderListings() {
     const g = gpus.find(x => x.term === selected);
     if (!g) return;
     detailTitle.textContent = `${g.term} \u2014 listings`;
-    const rows = sortRows(
-        g.listings.filter(l => category === "ALL" || l.category === category),
-        listingSort.key, listingSort.dir
-    );
+    const maxDays = ageFilter === "new" ? NEW_DAYS : ageFilter === "week" ? WEEK_DAYS : null;
+    const cutoff = maxDays === null ? null : Date.now() - maxDays * 86400000;
+    let data = g.listings.filter(l => category === "ALL" || l.category === category);
+    if (cutoff !== null) data = data.filter(l => l._seen !== null && l._seen >= cutoff);
+    const rows = sortRows(data, listingSort.key, listingSort.dir);
+    if (!rows.length) {
+        listingsBody.innerHTML = `<tr><td colspan="5" class="muted empty">No listings first seen in this window \u2014 switch to "All" for the full history.</td></tr>`;
+        return;
+    }
     listingsBody.innerHTML = rows.map(l => {
         const link = l.url
             ? `<a href="${l.url}" target="_blank" rel="noopener">${l.title}</a>`
             : l.title;
         const vb = l.negotiable ? '<span class="tag">VB</span>' : "";
+        const isNew = l._seen !== null && l._seen >= newCutoff;
+        const newTag = isNew ? ' <span class="tag new">new</span>' : "";
         const badge = `<span class="badge ${l.category === "PC" ? "pc" : "gpu"}">${l.category}</span>`;
         return `<tr>
       <td>${badge}</td>
-      <td>${link}${vb}</td>
+      <td>${link}${vb}${newTag}</td>
       <td class="num">${euro(l.price)}</td>
       <td class="datecell">${l.date && l.date !== "N/A" ? l.date : ""} ${ageLabel(l._ts)}</td>
       <td>${l.city || ""}</td>
@@ -193,6 +216,17 @@ catFilter.addEventListener("click", e => {
     catFilter.querySelectorAll("button").forEach(b => b.classList.toggle("active", b === btn));
     renderListings();
 });
+
+const ageFilterEl = document.querySelector("#ageFilter");
+if (ageFilterEl) {
+    ageFilterEl.addEventListener("click", e => {
+        const btn = e.target.closest("button");
+        if (!btn) return;
+        ageFilter = btn.dataset.age;
+        ageFilterEl.querySelectorAll("button").forEach(b => b.classList.toggle("active", b === btn));
+        renderListings();
+    });
+}
 
 // Top-of-page business snapshot computed from the loaded models.
 function renderKpis() {

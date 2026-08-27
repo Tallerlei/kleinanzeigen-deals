@@ -199,6 +199,28 @@ td a:hover {
     color: var(--muted);
 }
 
+.tag.new {
+    background: #123027;
+    color: #64d6a4;
+    font-weight: 600;
+}
+
+.newpill {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 6px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    background: #123027;
+    color: #64d6a4;
+}
+
+.empty {
+    text-align: center;
+    padding: 18px 12px;
+}
+
 .overview tbody tr {
     cursor: pointer;
 }
@@ -220,6 +242,12 @@ td a:hover {
     align-items: center;
     gap: 16px;
     padding: 0 24px;
+}
+
+.filters {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
 }
 
 .detail-head h2 {
