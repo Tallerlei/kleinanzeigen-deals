@@ -205,6 +205,16 @@ td a:hover {
     font-weight: 600;
 }
 
+.tag.ship {
+    background: #143043;
+    color: #7fc7ff;
+}
+
+.tag.buy {
+    background: #352811;
+    color: #e0a94f;
+}
+
 .newpill {
     display: inline-block;
     margin-left: 6px;

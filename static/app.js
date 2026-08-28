@@ -157,14 +157,18 @@ function renderListings() {
     });
     const rows = sortRows(data, listingSort.key, listingSort.dir);
     if (!rows.length) {
-        listingsBody.innerHTML = `<tr><td colspan="6" class="muted empty">No listings first seen in this window \u2014 switch to "All" for the full history.</td></tr>`;
+        listingsBody.innerHTML = `<tr><td colspan="7" class="muted empty">No listings first seen in this window \u2014 switch to "All" for the full history.</td></tr>`;
         return;
     }
     listingsBody.innerHTML = rows.map(l => {
         const link = l.url
             ? `<a href="${l.url}" target="_blank" rel="noopener">${l.title}</a>`
             : l.title;
-        const vb = l.negotiable ? '<span class="tag">VB</span>' : "";
+        const flags = [
+            l.negotiable ? '<span class="tag">VB</span>' : "",
+            l.delivery ? '<span class="tag ship">Versand</span>' : "",
+            l.instantBuy ? '<span class="tag buy">Direkt</span>' : "",
+        ].filter(Boolean).join("");
         const isNew = l._seen !== null && l._seen >= newCutoff;
         const newTag = isNew ? ' <span class="tag new">new</span>' : "";
         const badge = `<span class="badge ${l.category === "PC" ? "pc" : "gpu"}">${l.category}</span>`;
@@ -173,8 +177,9 @@ function renderListings() {
                         : '<span class="muted">market ref</span>';
         return `<tr>
       <td>${badge}</td>
-      <td>${link}${vb}${newTag}</td>
+            <td>${link}${newTag}</td>
       <td class="num">${euro(l.price)}</td>
+            <td>${flags || '<span class="muted">\u2014</span>'}</td>
             <td class="num">${room}</td>
       <td class="datecell">${l.date && l.date !== "N/A" ? l.date : ""} ${ageLabel(l._ts)}</td>
       <td>${l.city || ""}</td>
