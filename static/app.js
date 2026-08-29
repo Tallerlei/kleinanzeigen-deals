@@ -6,6 +6,8 @@ const listingsBody = document.querySelector("#listings tbody");
 const catFilter = document.querySelector("#catFilter");
 
 const euro = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE") + " \u20ac";
+const score = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE");
+const value = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " pts/\u20ac";
 const marginClass = n => n > 0 ? "pos" : n < 0 ? "neg" : "";
 
 // Parse a "dd.mm.yyyy" string into an epoch (ms), or null when unavailable.
@@ -57,7 +59,7 @@ function sparkline(values, w = 80, h = 22) {
     <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
 }
 
-let overviewSort = { key: "margin", dir: -1 };
+let overviewSort = { key: "gpuValue", dir: -1 };
 let selected = null;
 let listingSort = { key: "price", dir: 1 };
 let category = "ALL";
@@ -93,10 +95,14 @@ function renderOverview() {
         const thin = g.margin !== null && Math.min(g.gpuCount, g.pcCount) < THIN;
         const warn = thin ? ' <span class="warn" title="Backed by fewer than 2 ads on one side \u2013 margin may be unreliable">\u26a0</span>' : "";
         const med = v => v === null || v === undefined ? "" : `<span class="med" title="Median (typical) price">~${euro(v)}</span>`;
+          const medValue = v => v === null || v === undefined ? "" : `<span class="med" title="Score per euro at median GPU price">~${value(v)}</span>`;
+          const scoreTitle = g.benchmarkName ? ` title="${g.benchmarkName}"` : "";
         return `
     <tr data-term="${g.term}" class="${selected === g.term ? "selected" : ""}">
       <td>${g.term}</td>
+        <td class="num"${scoreTitle}>${score(g.score)}</td>
       <td class="num">${euro(g.gpuLowest)}${med(g.gpuMedian)}</td>
+        <td class="num valuecell">${value(g.gpuValue)}${medValue(g.gpuMedianValue)}</td>
       <td class="num">${euro(g.pcLowest)}${med(g.pcMedian)}</td>
       <td class="num ${marginClass(g.margin)}">${euro(g.margin)}${warn}${med(g.medianMargin)}</td>
       <td class="num trend">${spark}${delta}</td>
@@ -146,7 +152,8 @@ function renderChart(g) {
 function renderListings() {
     const g = gpus.find(x => x.term === selected);
     if (!g) return;
-    detailTitle.textContent = `${g.term} \u2014 listings`;
+    const valueInfo = g.score ? ` \u00b7 score ${score(g.score)}${g.gpuValue ? ` \u00b7 ${value(g.gpuValue)}` : ""}` : "";
+    detailTitle.textContent = `${g.term} \u2014 listings${valueInfo}`;
     const maxDays = ageFilter === "new" ? NEW_DAYS : ageFilter === "week" ? WEEK_DAYS : null;
     const cutoff = maxDays === null ? null : Date.now() - maxDays * 86400000;
     let data = g.listings.filter(l => category === "ALL" || l.category === category);
@@ -247,13 +254,15 @@ function renderKpis() {
     if (!box) return;
     const margins = gpus.map(g => g.margin).filter(m => m !== null && m !== undefined);
     const best = margins.length ? Math.max(...margins) : null;
-    const avg = margins.length ? Math.round(margins.reduce((a, b) => a + b, 0) / margins.length) : null;
     const bestModel = best !== null ? (gpus.find(g => g.margin === best) || {}).term : null;
+    const values = gpus.map(g => g.gpuValue).filter(v => v !== null && v !== undefined);
+    const bestValue = values.length ? Math.max(...values) : null;
+    const bestValueModel = bestValue !== null ? (gpus.find(g => g.gpuValue === bestValue) || {}).term : null;
     const listingCount = gpus.reduce((n, g) => n + (g.gpuCount || 0) + (g.pcCount || 0), 0);
     const cards = [
         { label: "Models tracked", value: gpus.length },
+        { label: "Best value", value: value(bestValue), sub: bestValueModel },
         { label: "Best margin", value: euro(best), sub: bestModel, cls: marginClass(best) },
-        { label: "Avg margin", value: euro(avg), cls: marginClass(avg) },
         { label: "Total listings", value: listingCount.toLocaleString("de-DE") },
     ];
     box.innerHTML = cards.map(c => `
