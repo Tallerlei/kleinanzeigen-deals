@@ -220,6 +220,30 @@ td a:hover {
     text-decoration: underline;
 }
 
+.listing-cell {
+    display: grid;
+    grid-template-columns: 54px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+}
+
+.listing-title {
+    min-width: 0;
+}
+
+.thumb {
+    width: 54px;
+    height: 42px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: #10131a;
+}
+
+.empty-thumb {
+    display: inline-block;
+}
+
 .pos {
     color: var(--pos);
     font-weight: 600;

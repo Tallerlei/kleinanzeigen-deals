@@ -120,6 +120,16 @@ function listingFlags(l) {
     ].filter(Boolean).join("");
 }
 
+function escapeAttr(s) {
+    return String(s).replace(/[&"<>]/g, c => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+function listingThumb(l) {
+    const src = String(l.imageUrl || "").trim();
+    if (!/^https?:\/\//i.test(src)) return '<span class="thumb empty-thumb"></span>';
+    return `<img class="thumb" src="${escapeAttr(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
+}
+
 function listingRoom(l) {
     if (l.category !== "GPU" || l._roomLow === null || l._roomLow === undefined) {
         return '<span class="muted">market ref</span>';
@@ -132,7 +142,7 @@ function listingLink(l, showNew = false) {
         ? `<a href="${l.url}" target="_blank" rel="noopener">${l.title}</a>`
         : l.title;
     const newTag = showNew && isNewListing(l) ? ' <span class="tag new">new</span>' : "";
-    return `${link}${newTag}`;
+    return `<div class="listing-cell">${listingThumb(l)}<span class="listing-title">${link}${newTag}</span></div>`;
 }
 
 function withMarketContext(g, l) {
