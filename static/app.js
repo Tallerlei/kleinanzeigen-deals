@@ -1,5 +1,9 @@
 const gpus = window.GPUS || [];
 const overviewBody = document.querySelector("#gpus tbody");
+const newListingsBody = document.querySelector("#newListings tbody");
+const newListingsCount = document.querySelector("#newListingsCount");
+const newListingsPanel = document.querySelector("#newListingsPanel");
+const toggleNewListings = document.querySelector("#toggleNewListings");
 const detail = document.querySelector("#detail");
 const detailTitle = document.querySelector("#detailTitle");
 const listingsBody = document.querySelector("#listings tbody");
@@ -18,6 +22,12 @@ function parseDMY(s) {
     return new Date(+m[3], +m[2] - 1, +m[1]).getTime();
 }
 
+function parseFirstSeen(s) {
+    if (!s) return null;
+    const ts = Date.parse(s);
+    return Number.isFinite(ts) ? ts : parseDMY(s);
+}
+
 // Human-friendly freshness label for a listing timestamp.
 function ageLabel(ts) {
     if (ts === null || ts === undefined) return '<span class="muted">\u2014</span>';
@@ -27,18 +37,16 @@ function ageLabel(ts) {
     return `<span class="age ${cls}">${txt}</span>`;
 }
 
-// Precompute a sortable timestamp per listing so the Date column ranks by recency,
-// plus a "first seen" epoch used to surface only newly-appeared deals. Until the
-// scraper has stamped First Seen, fall back to the posting date so "New" still works.
+// Precompute sortable listing dates plus exact first-seen timestamps.
 gpus.forEach(g => (g.listings || []).forEach(l => {
     l._ts = parseDMY(l.date);
-    const fs = parseDMY(l.firstSeen);
-    l._seen = fs !== null ? fs : l._ts;
+    l._seen = parseFirstSeen(l.firstSeen);
 }));
 
-const NEW_DAYS = 3;   // "New" = first recorded within this many days
+const NEW_HOURS = 24;
+const NEW_DAYS = 1;   // "New" = first recorded within this many days
 const WEEK_DAYS = 7;
-const newCutoff = Date.now() - NEW_DAYS * 86400000;
+const newCutoff = Date.now() - NEW_HOURS * 3600000;
 // Count freshly-seen GPU deals per model so the overview flags where to look.
 gpus.forEach(g => {
     g._newGpu = (g.listings || []).filter(
@@ -60,6 +68,7 @@ function sparkline(values, w = 80, h = 22) {
 }
 
 let overviewSort = { key: "gpuValue", dir: -1 };
+let newListingsSort = { key: "_seen", dir: -1 };
 let selected = null;
 let listingSort = { key: "price", dir: 1 };
 let category = "ALL";
@@ -85,6 +94,68 @@ function sortRows(rows, key, dir) {
     });
 }
 
+function listingFlags(l) {
+    return [
+        l.negotiable ? '<span class="tag">VB</span>' : "",
+        l.delivery ? '<span class="tag ship">Versand</span>' : "",
+        l.instantBuy ? '<span class="tag buy">Direkt</span>' : "",
+    ].filter(Boolean).join("");
+}
+
+function listingRoom(l) {
+    if (l.category !== "GPU" || l._roomLow === null || l._roomLow === undefined) {
+        return '<span class="muted">market ref</span>';
+    }
+    return `<span class="room ${marginClass(l._roomLow)}"><span class="main">${l._roomLow > 0 ? "+" : ""}${euro(l._roomLow)}</span><span class="sub">vs low${l._roomMedian !== null && l._roomMedian !== undefined ? ` / ${l._roomMedian > 0 ? "+" : ""}${euro(l._roomMedian)} vs med` : ""}</span></span>`;
+}
+
+function listingLink(l, showNew = false) {
+    const link = l.url
+        ? `<a href="${l.url}" target="_blank" rel="noopener">${l.title}</a>`
+        : l.title;
+    const isNew = l._seen !== null && l._seen >= newCutoff;
+    const newTag = showNew && isNew ? ' <span class="tag new">new</span>' : "";
+    return `${link}${newTag}`;
+}
+
+function withMarketContext(g, l) {
+    return {
+        ...l,
+        term: g.term,
+        _roomLow: l.category === "GPU" && g.pcLowest !== null && g.pcLowest !== undefined ? g.pcLowest - l.price : null,
+        _roomMedian: l.category === "GPU" && g.pcMedian !== null && g.pcMedian !== undefined ? g.pcMedian - l.price : null,
+    };
+}
+
+function renderNewListings() {
+    const rows = sortRows(
+        gpus.flatMap(g => (g.listings || []).map(l => withMarketContext(g, l)))
+            .filter(l => l._seen !== null && l._seen >= newCutoff),
+        newListingsSort.key, newListingsSort.dir
+    );
+    if (newListingsCount) {
+        newListingsCount.textContent = `${rows.length} first seen in the last ${NEW_HOURS}h`;
+    }
+    if (!newListingsBody) return;
+    if (!rows.length) {
+        newListingsBody.innerHTML = `<tr><td colspan="8" class="muted empty">No listings first seen in the last ${NEW_HOURS} hours.</td></tr>`;
+        return;
+    }
+    newListingsBody.innerHTML = rows.map(l => {
+        const badge = `<span class="badge ${l.category === "PC" ? "pc" : "gpu"}">${l.category}</span>`;
+        return `<tr data-term="${l.term}">
+      <td class="datecell">${ageLabel(l._seen)}</td>
+      <td>${l.term}</td>
+      <td>${badge}</td>
+      <td>${listingLink(l)}</td>
+      <td class="num">${euro(l.price)}</td>
+      <td>${listingFlags(l) || '<span class="muted">\u2014</span>'}</td>
+      <td class="num">${listingRoom(l)}</td>
+      <td>${l.city || ""}</td>
+    </tr>`;
+    }).join("");
+}
+
 function renderOverview() {
     const rows = sortRows(gpus, overviewSort.key, overviewSort.dir);
     overviewBody.innerHTML = rows.map(g => {
@@ -95,14 +166,14 @@ function renderOverview() {
         const thin = g.margin !== null && Math.min(g.gpuCount, g.pcCount) < THIN;
         const warn = thin ? ' <span class="warn" title="Backed by fewer than 2 ads on one side \u2013 margin may be unreliable">\u26a0</span>' : "";
         const med = v => v === null || v === undefined ? "" : `<span class="med" title="Median (typical) price">~${euro(v)}</span>`;
-          const medValue = v => v === null || v === undefined ? "" : `<span class="med" title="Score per euro at median GPU price">~${value(v)}</span>`;
-          const scoreTitle = g.benchmarkName ? ` title="${g.benchmarkName}"` : "";
+                const medValue = v => v === null || v === undefined ? "" : `<span class="med" title="Score per euro at median GPU price">~${value(v)}</span>`;
+                const scoreTitle = g.benchmarkName ? ` title="${g.benchmarkName}"` : "";
         return `
     <tr data-term="${g.term}" class="${selected === g.term ? "selected" : ""}">
       <td>${g.term}</td>
-        <td class="num"${scoreTitle}>${score(g.score)}</td>
+            <td class="num"${scoreTitle}>${score(g.score)}</td>
       <td class="num">${euro(g.gpuLowest)}${med(g.gpuMedian)}</td>
-        <td class="num valuecell">${value(g.gpuValue)}${medValue(g.gpuMedianValue)}</td>
+            <td class="num valuecell">${value(g.gpuValue)}${medValue(g.gpuMedianValue)}</td>
       <td class="num">${euro(g.pcLowest)}${med(g.pcMedian)}</td>
       <td class="num ${marginClass(g.margin)}">${euro(g.margin)}${warn}${med(g.medianMargin)}</td>
       <td class="num trend">${spark}${delta}</td>
@@ -157,37 +228,25 @@ function renderListings() {
     const maxDays = ageFilter === "new" ? NEW_DAYS : ageFilter === "week" ? WEEK_DAYS : null;
     const cutoff = maxDays === null ? null : Date.now() - maxDays * 86400000;
     let data = g.listings.filter(l => category === "ALL" || l.category === category);
-    if (cutoff !== null) data = data.filter(l => l._seen !== null && l._seen >= cutoff);
-    data.forEach(l => {
-        l._roomLow = l.category === "GPU" && g.pcLowest !== null && g.pcLowest !== undefined ? g.pcLowest - l.price : null;
-        l._roomMedian = l.category === "GPU" && g.pcMedian !== null && g.pcMedian !== undefined ? g.pcMedian - l.price : null;
+    if (cutoff !== null) data = data.filter(l => {
+        const basis = l._seen !== null ? l._seen : l._ts;
+        return basis !== null && basis >= cutoff;
     });
+    data = data.map(l => withMarketContext(g, l));
     const rows = sortRows(data, listingSort.key, listingSort.dir);
     if (!rows.length) {
         listingsBody.innerHTML = `<tr><td colspan="7" class="muted empty">No listings first seen in this window \u2014 switch to "All" for the full history.</td></tr>`;
         return;
     }
     listingsBody.innerHTML = rows.map(l => {
-        const link = l.url
-            ? `<a href="${l.url}" target="_blank" rel="noopener">${l.title}</a>`
-            : l.title;
-        const flags = [
-            l.negotiable ? '<span class="tag">VB</span>' : "",
-            l.delivery ? '<span class="tag ship">Versand</span>' : "",
-            l.instantBuy ? '<span class="tag buy">Direkt</span>' : "",
-        ].filter(Boolean).join("");
-        const isNew = l._seen !== null && l._seen >= newCutoff;
-        const newTag = isNew ? ' <span class="tag new">new</span>' : "";
         const badge = `<span class="badge ${l.category === "PC" ? "pc" : "gpu"}">${l.category}</span>`;
-                const room = l.category === "GPU" && l._roomLow !== null
-                        ? `<span class="room ${marginClass(l._roomLow)}"><span class="main">${l._roomLow > 0 ? "+" : ""}${euro(l._roomLow)}</span><span class="sub">vs low${l._roomMedian !== null ? ` / ${l._roomMedian > 0 ? "+" : ""}${euro(l._roomMedian)} vs med` : ""}</span></span>`
-                        : '<span class="muted">market ref</span>';
+                const flags = listingFlags(l);
         return `<tr>
       <td>${badge}</td>
-            <td>${link}${newTag}</td>
+            <td>${listingLink(l, true)}</td>
       <td class="num">${euro(l.price)}</td>
             <td>${flags || '<span class="muted">\u2014</span>'}</td>
-            <td class="num">${room}</td>
+            <td class="num">${listingRoom(l)}</td>
       <td class="datecell">${l.date && l.date !== "N/A" ? l.date : ""} ${ageLabel(l._ts)}</td>
       <td>${l.city || ""}</td>
     </tr>`;
@@ -208,6 +267,22 @@ overviewBody.addEventListener("click", e => {
     if (tr) selectGpu(tr.dataset.term);
 });
 
+if (newListingsBody) {
+    newListingsBody.addEventListener("click", e => {
+        if (e.target.closest("a")) return;
+        const tr = e.target.closest("tr[data-term]");
+        if (tr) selectGpu(tr.dataset.term);
+    });
+}
+
+if (toggleNewListings && newListingsPanel) {
+    toggleNewListings.addEventListener("click", () => {
+        const isHidden = newListingsPanel.classList.toggle("hidden");
+        toggleNewListings.textContent = isHidden ? "Show new listings" : "Hide new listings";
+        if (!isHidden) newListingsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+}
+
 function bindSort(tableSel, state, rerender) {
     document.querySelectorAll(`${tableSel} th`).forEach(th => {
         th.addEventListener("click", () => {
@@ -227,6 +302,7 @@ function bindSort(tableSel, state, rerender) {
 }
 
 bindSort("#gpus", overviewSort, renderOverview);
+bindSort("#newListings", newListingsSort, renderNewListings);
 bindSort("#listings", listingSort, renderListings);
 
 catFilter.addEventListener("click", e => {
@@ -273,6 +349,7 @@ function renderKpis() {
 }
 
 renderKpis();
+renderNewListings();
 renderOverview();
 
 
