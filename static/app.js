@@ -47,10 +47,28 @@ const NEW_HOURS = 24;
 const NEW_DAYS = 1;   // "New" = first recorded within this many days
 const WEEK_DAYS = 7;
 const newCutoff = Date.now() - NEW_HOURS * 3600000;
+const allListings = gpus.flatMap(g => g.listings || []);
+const recentStampCounts = allListings.reduce((counts, l) => {
+    if (l._seen !== null && l._seen >= newCutoff && l.firstSeen) {
+        counts[l.firstSeen] = (counts[l.firstSeen] || 0) + 1;
+    }
+    return counts;
+}, {});
+const dominantRecentStamp = Object.entries(recentStampCounts)
+    .sort((a, b) => b[1] - a[1])[0];
+const ignoredNewStamp = dominantRecentStamp
+    && dominantRecentStamp[1] > Math.max(50, allListings.length * 0.5)
+    ? dominantRecentStamp[0]
+    : null;
+
+function isNewListing(l) {
+    return l._seen !== null && l._seen >= newCutoff && l.firstSeen !== ignoredNewStamp;
+}
+
 // Count freshly-seen GPU deals per model so the overview flags where to look.
 gpus.forEach(g => {
     g._newGpu = (g.listings || []).filter(
-        l => l.category === "GPU" && l._seen !== null && l._seen >= newCutoff).length;
+        l => l.category === "GPU" && isNewListing(l)).length;
 });
 
 // Small inline SVG sparkline of a numeric series.
@@ -113,8 +131,7 @@ function listingLink(l, showNew = false) {
     const link = l.url
         ? `<a href="${l.url}" target="_blank" rel="noopener">${l.title}</a>`
         : l.title;
-    const isNew = l._seen !== null && l._seen >= newCutoff;
-    const newTag = showNew && isNew ? ' <span class="tag new">new</span>' : "";
+    const newTag = showNew && isNewListing(l) ? ' <span class="tag new">new</span>' : "";
     return `${link}${newTag}`;
 }
 
@@ -130,7 +147,7 @@ function withMarketContext(g, l) {
 function renderNewListings() {
     const rows = sortRows(
         gpus.flatMap(g => (g.listings || []).map(l => withMarketContext(g, l)))
-            .filter(l => l._seen !== null && l._seen >= newCutoff),
+            .filter(isNewListing),
         newListingsSort.key, newListingsSort.dir
     );
     if (newListingsCount) {
