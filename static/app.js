@@ -41,35 +41,34 @@ function ageLabel(ts) {
 gpus.forEach(g => (g.listings || []).forEach(l => {
     l._ts = parseDMY(l.date);
     l._seen = parseFirstSeen(l.firstSeen);
+    l._ageTs = l._ts !== null ? l._ts : l._seen;
 }));
 
-const NEW_HOURS = 24;
-const NEW_DAYS = 1;   // "New" = first recorded within this many days
-const WEEK_DAYS = 7;
-const newCutoff = Date.now() - NEW_HOURS * 3600000;
-const allListings = gpus.flatMap(g => g.listings || []);
-const recentStampCounts = allListings.reduce((counts, l) => {
-    if (l._seen !== null && l._seen >= newCutoff && l.firstSeen) {
-        counts[l.firstSeen] = (counts[l.firstSeen] || 0) + 1;
-    }
-    return counts;
-}, {});
-const dominantRecentStamp = Object.entries(recentStampCounts)
-    .sort((a, b) => b[1] - a[1])[0];
-const ignoredNewStamp = dominantRecentStamp
-    && dominantRecentStamp[1] > Math.max(50, allListings.length * 0.5)
-    ? dominantRecentStamp[0]
-    : null;
+const AGE_WINDOWS = {
+    "24h": { label: "24h", ms: 24 * 3600000 },
+    "3d": { label: "3d", ms: 3 * 86400000 },
+    "7d": { label: "7d", ms: 7 * 86400000 },
+    all: { label: "All", ms: null },
+};
 
-function isNewListing(l) {
-    return l._seen !== null && l._seen >= newCutoff && l.firstSeen !== ignoredNewStamp;
+function activeAgeWindow() {
+    return AGE_WINDOWS[ageFilter] || AGE_WINDOWS["24h"];
 }
 
-// Count freshly-seen GPU deals per model so the overview flags where to look.
-gpus.forEach(g => {
-    g._newGpu = (g.listings || []).filter(
-        l => l.category === "GPU" && isNewListing(l)).length;
-});
+function isInAgeWindow(l) {
+    const selectedAgeWindow = activeAgeWindow();
+    return selectedAgeWindow.ms === null || (l._ageTs !== null && l._ageTs >= Date.now() - selectedAgeWindow.ms);
+}
+
+function ageWindowText() {
+    const selectedAgeWindow = activeAgeWindow();
+    return selectedAgeWindow.ms === null ? "all listings" : `listings in the last ${selectedAgeWindow.label}`;
+}
+
+function listingAgeCell(l) {
+    const date = l.date && l.date !== "N/A" ? l.date : "";
+    return `${date} ${ageLabel(l._ageTs)}`;
+}
 
 // Small inline SVG sparkline of a numeric series.
 function sparkline(values, w = 80, h = 22) {
@@ -86,11 +85,11 @@ function sparkline(values, w = 80, h = 22) {
 }
 
 let overviewSort = { key: "gpuValue", dir: -1 };
-let newListingsSort = { key: "_seen", dir: -1 };
+let newListingsSort = { key: "_ageTs", dir: -1 };
 let selected = null;
 let listingSort = { key: "price", dir: 1 };
 let category = "ALL";
-let ageFilter = "new";   // new | week | all
+let ageFilter = "24h";
 
 // Market depth per side: few comparable ads -> fragile lowest price / margin.
 function depthClass(n) {
@@ -137,12 +136,11 @@ function listingRoom(l) {
     return `<span class="room ${marginClass(l._roomLow)}"><span class="main">${l._roomLow > 0 ? "+" : ""}${euro(l._roomLow)}</span><span class="sub">vs low${l._roomMedian !== null && l._roomMedian !== undefined ? ` / ${l._roomMedian > 0 ? "+" : ""}${euro(l._roomMedian)} vs med` : ""}</span></span>`;
 }
 
-function listingLink(l, showNew = false) {
+function listingLink(l) {
     const link = l.url
         ? `<a href="${l.url}" target="_blank" rel="noopener">${l.title}</a>`
         : l.title;
-    const newTag = showNew && isNewListing(l) ? ' <span class="tag new">new</span>' : "";
-    return `<div class="listing-cell">${listingThumb(l)}<span class="listing-title">${link}${newTag}</span></div>`;
+    return `<div class="listing-cell">${listingThumb(l)}<span class="listing-title">${link}</span></div>`;
 }
 
 function withMarketContext(g, l) {
@@ -157,21 +155,21 @@ function withMarketContext(g, l) {
 function renderNewListings() {
     const rows = sortRows(
         gpus.flatMap(g => (g.listings || []).map(l => withMarketContext(g, l)))
-            .filter(isNewListing),
+            .filter(isInAgeWindow),
         newListingsSort.key, newListingsSort.dir
     );
     if (newListingsCount) {
-        newListingsCount.textContent = `${rows.length} first seen in the last ${NEW_HOURS}h`;
+        newListingsCount.textContent = `${rows.length} ${ageWindowText()}`;
     }
     if (!newListingsBody) return;
     if (!rows.length) {
-        newListingsBody.innerHTML = `<tr><td colspan="8" class="muted empty">No listings first seen in the last ${NEW_HOURS} hours.</td></tr>`;
+        newListingsBody.innerHTML = `<tr><td colspan="8" class="muted empty">No ${ageWindowText()}.</td></tr>`;
         return;
     }
     newListingsBody.innerHTML = rows.map(l => {
         const badge = `<span class="badge ${l.category === "PC" ? "pc" : "gpu"}">${l.category}</span>`;
         return `<tr data-term="${l.term}">
-      <td class="datecell">${ageLabel(l._seen)}</td>
+      <td class="datecell">${listingAgeCell(l)}</td>
       <td>${l.term}</td>
       <td>${badge}</td>
       <td>${listingLink(l)}</td>
@@ -184,6 +182,11 @@ function renderNewListings() {
 }
 
 function renderOverview() {
+    const selectedAgeWindow = activeAgeWindow();
+    gpus.forEach(g => {
+        g._ageGpu = selectedAgeWindow.ms === null ? 0 : (g.listings || [])
+            .filter(l => l.category === "GPU" && isInAgeWindow(l)).length;
+    });
     const rows = sortRows(gpus, overviewSort.key, overviewSort.dir);
     overviewBody.innerHTML = rows.map(g => {
         const spark = sparkline((g.history || []).map(p => p.margin));
@@ -193,8 +196,8 @@ function renderOverview() {
         const thin = g.margin !== null && Math.min(g.gpuCount, g.pcCount) < THIN;
         const warn = thin ? ' <span class="warn" title="Backed by fewer than 2 ads on one side \u2013 margin may be unreliable">\u26a0</span>' : "";
         const med = v => v === null || v === undefined ? "" : `<span class="med" title="Median (typical) price">~${euro(v)}</span>`;
-                const medValue = v => v === null || v === undefined ? "" : `<span class="med" title="Score per euro at median GPU price">~${value(v)}</span>`;
-                const scoreTitle = g.benchmarkName ? ` title="${g.benchmarkName}"` : "";
+        const medValue = v => v === null || v === undefined ? "" : `<span class="med" title="Score per euro at median GPU price">~${value(v)}</span>`;
+        const scoreTitle = g.benchmarkName ? ` title="${g.benchmarkName}"` : "";
         return `
     <tr data-term="${g.term}" class="${selected === g.term ? "selected" : ""}">
       <td>${g.term}</td>
@@ -204,7 +207,7 @@ function renderOverview() {
       <td class="num">${euro(g.pcLowest)}${med(g.pcMedian)}</td>
       <td class="num ${marginClass(g.margin)}">${euro(g.margin)}${warn}${med(g.medianMargin)}</td>
       <td class="num trend">${spark}${delta}</td>
-      <td class="num depth ${depthClass(g.gpuCount)}">${g.gpuCount}${g._newGpu ? ` <span class="newpill" title="${g._newGpu} new GPU listing(s) in the last ${NEW_DAYS} days">+${g._newGpu}</span>` : ""}</td>
+            <td class="num depth ${depthClass(g.gpuCount)}">${g.gpuCount}${g._ageGpu ? ` <span class="newpill" title="${g._ageGpu} GPU listing(s) in the last ${selectedAgeWindow.label}">+${g._ageGpu}</span>` : ""}</td>
       <td class="num depth ${depthClass(g.pcCount)}">${g.pcCount}</td>
     </tr>`;
     }).join("");
@@ -252,29 +255,24 @@ function renderListings() {
     if (!g) return;
     const valueInfo = g.score ? ` \u00b7 score ${score(g.score)}${g.gpuValue ? ` \u00b7 ${value(g.gpuValue)}` : ""}` : "";
     detailTitle.textContent = `${g.term} \u2014 listings${valueInfo}`;
-    const maxDays = ageFilter === "new" ? NEW_DAYS : ageFilter === "week" ? WEEK_DAYS : null;
-    const cutoff = maxDays === null ? null : Date.now() - maxDays * 86400000;
     let data = g.listings.filter(l => category === "ALL" || l.category === category);
-    if (cutoff !== null) data = data.filter(l => {
-        const basis = l._seen !== null ? l._seen : l._ts;
-        return basis !== null && basis >= cutoff;
-    });
+    data = data.filter(isInAgeWindow);
     data = data.map(l => withMarketContext(g, l));
     const rows = sortRows(data, listingSort.key, listingSort.dir);
     if (!rows.length) {
-        listingsBody.innerHTML = `<tr><td colspan="7" class="muted empty">No listings first seen in this window \u2014 switch to "All" for the full history.</td></tr>`;
+        listingsBody.innerHTML = `<tr><td colspan="7" class="muted empty">No ${ageWindowText()} \u2014 switch to "All" for the full history.</td></tr>`;
         return;
     }
     listingsBody.innerHTML = rows.map(l => {
         const badge = `<span class="badge ${l.category === "PC" ? "pc" : "gpu"}">${l.category}</span>`;
-                const flags = listingFlags(l);
+        const flags = listingFlags(l);
         return `<tr>
       <td>${badge}</td>
-            <td>${listingLink(l, true)}</td>
+        <td>${listingLink(l)}</td>
       <td class="num">${euro(l.price)}</td>
             <td>${flags || '<span class="muted">\u2014</span>'}</td>
             <td class="num">${listingRoom(l)}</td>
-      <td class="datecell">${l.date && l.date !== "N/A" ? l.date : ""} ${ageLabel(l._ts)}</td>
+    <td class="datecell">${listingAgeCell(l)}</td>
       <td>${l.city || ""}</td>
     </tr>`;
     }).join("");
@@ -305,7 +303,7 @@ if (newListingsBody) {
 if (toggleNewListings && newListingsPanel) {
     toggleNewListings.addEventListener("click", () => {
         const isHidden = newListingsPanel.classList.toggle("hidden");
-        toggleNewListings.textContent = isHidden ? "Show new listings" : "Hide new listings";
+        toggleNewListings.textContent = isHidden ? "Show listings" : "Hide listings";
         if (!isHidden) newListingsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     });
 }
@@ -340,16 +338,19 @@ catFilter.addEventListener("click", e => {
     renderListings();
 });
 
-const ageFilterEl = document.querySelector("#ageFilter");
-if (ageFilterEl) {
+document.querySelectorAll(".age-filter").forEach(ageFilterEl => {
     ageFilterEl.addEventListener("click", e => {
-        const btn = e.target.closest("button");
+        const btn = e.target.closest("button[data-age]");
         if (!btn) return;
         ageFilter = btn.dataset.age;
-        ageFilterEl.querySelectorAll("button").forEach(b => b.classList.toggle("active", b === btn));
+        document.querySelectorAll(".age-filter button").forEach(b => {
+            b.classList.toggle("active", b.dataset.age === ageFilter);
+        });
+        renderNewListings();
+        renderOverview();
         renderListings();
     });
-}
+});
 
 // Top-of-page business snapshot computed from the loaded models.
 function renderKpis() {
