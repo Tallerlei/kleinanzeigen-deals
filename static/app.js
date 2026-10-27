@@ -13,7 +13,11 @@ const euro = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString(
 const score = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE");
 
 // Kleinanzeigen keyword-search URL for a term (same slug shape the scraper uses).
-const searchUrl = term => `https://www.kleinanzeigen.de/s-${encodeURIComponent(String(term).trim().toLowerCase().replace(/\s+/g, "-"))}/k0`;
+const searchUrl = (term, min, max) => {
+    const price = min !== null || max !== null ? `preis:${min ?? ""}:${max ?? ""}/` : "";
+    const slug = encodeURIComponent(String(term).trim().toLowerCase().replace(/\s+/g, "-"));
+    return `https://www.kleinanzeigen.de/s-${price}${slug}/k0`;
+};
 const value = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " pts/\u20ac";
 const marginClass = n => n > 0 ? "pos" : n < 0 ? "neg" : "";
 
@@ -203,7 +207,7 @@ function renderOverview() {
         const scoreTitle = g.benchmarkName ? ` title="${g.benchmarkName}"` : "";
         return `
     <tr data-term="${g.term}" class="${selected === g.term ? "selected" : ""}">
-      <td>${g.term} <a class="searchlink" href="${searchUrl(g.term)}" target="_blank" rel="noopener" title="Open '${escapeAttr(g.term)}' search on Kleinanzeigen" aria-label="Open '${escapeAttr(g.term)}' search on Kleinanzeigen">\u2197</a></td>
+    <td>${g.term} <a class="searchlink" href="${searchUrl(g.term, g.gpuMin, g.gpuMax)}" target="_blank" rel="noopener" title="Open '${escapeAttr(g.term)}' search on Kleinanzeigen" aria-label="Open '${escapeAttr(g.term)}' search on Kleinanzeigen">\u2197</a></td>
             <td class="num"${scoreTitle}>${score(g.score)}</td>
       <td class="num">${euro(g.gpuLowest)}${med(g.gpuMedian)}</td>
             <td class="num valuecell">${value(g.gpuValue)}${medValue(g.gpuMedianValue)}</td>
