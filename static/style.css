@@ -220,6 +220,15 @@ td a:hover {
     text-decoration: underline;
 }
 
+.searchlink {
+    opacity: 0.55;
+    font-size: 0.85em;
+}
+
+.searchlink:hover {
+    opacity: 1;
+}
+
 .listing-cell {
     display: grid;
     grid-template-columns: 54px minmax(0, 1fr);

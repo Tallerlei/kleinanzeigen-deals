@@ -11,6 +11,9 @@ const catFilter = document.querySelector("#catFilter");
 
 const euro = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE") + " \u20ac";
 const score = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE");
+
+// Kleinanzeigen keyword-search URL for a term (same slug shape the scraper uses).
+const searchUrl = term => `https://www.kleinanzeigen.de/s-${encodeURIComponent(String(term).trim().toLowerCase().replace(/\s+/g, "-"))}/k0`;
 const value = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " pts/\u20ac";
 const marginClass = n => n > 0 ? "pos" : n < 0 ? "neg" : "";
 
@@ -200,7 +203,7 @@ function renderOverview() {
         const scoreTitle = g.benchmarkName ? ` title="${g.benchmarkName}"` : "";
         return `
     <tr data-term="${g.term}" class="${selected === g.term ? "selected" : ""}">
-      <td>${g.term}</td>
+      <td>${g.term} <a class="searchlink" href="${searchUrl(g.term)}" target="_blank" rel="noopener" title="Open '${escapeAttr(g.term)}' search on Kleinanzeigen" aria-label="Open '${escapeAttr(g.term)}' search on Kleinanzeigen">\u2197</a></td>
             <td class="num"${scoreTitle}>${score(g.score)}</td>
       <td class="num">${euro(g.gpuLowest)}${med(g.gpuMedian)}</td>
             <td class="num valuecell">${value(g.gpuValue)}${medValue(g.gpuMedianValue)}</td>
@@ -288,6 +291,7 @@ function selectGpu(term) {
 }
 
 overviewBody.addEventListener("click", e => {
+    if (e.target.closest("a")) return;
     const tr = e.target.closest("tr");
     if (tr) selectGpu(tr.dataset.term);
 });
