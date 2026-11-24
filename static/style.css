@@ -97,6 +97,30 @@ h1 {
     border-color: var(--accent);
 }
 
+.account-bar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    padding: 0 24px;
+}
+
+.account-bar button,
+.dialog-actions button {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 12px;
+    cursor: pointer;
+    font: inherit;
+}
+
+.account-bar button:hover,
+.dialog-actions button:hover {
+    border-color: var(--accent);
+}
+
 @media (max-width: 640px) {
     .kpis {
         grid-template-columns: repeat(2, 1fr);
@@ -171,6 +195,10 @@ table {
 }
 
 .new-listings tbody tr {
+    cursor: pointer;
+}
+
+.opportunities tbody tr {
     cursor: pointer;
 }
 
@@ -400,6 +428,16 @@ td a:hover {
     color: #64d6a4;
 }
 
+.badge.bundle {
+    background: #3a2c10;
+    color: #e0c04f;
+}
+
+.badge.review {
+    background: #3b2528;
+    color: #ef9aa6;
+}
+
 .datecell {
     white-space: nowrap;
 }
@@ -497,6 +535,98 @@ td a:hover {
 .linechart .axis {
     fill: var(--muted);
     font-size: 10px;
+}
+
+.dialog {
+    width: min(520px, calc(100% - 32px));
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0;
+}
+
+.dialog::backdrop {
+    background: rgb(0 0 0 / 68%);
+}
+
+.dialog form {
+    display: grid;
+    gap: 12px;
+    padding: 20px;
+}
+
+.dialog h2,
+.dialog h3 {
+    margin: 0;
+}
+
+.dialog label {
+    display: grid;
+    gap: 4px;
+    color: var(--muted);
+}
+
+.dialog input {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+}
+
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.form-error {
+    min-height: 1.5em;
+    margin: 0;
+    color: var(--neg);
+}
+
+.settings-dialog {
+    width: min(720px, calc(100% - 32px));
+}
+
+.settings-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.model-settings {
+    display: grid;
+    gap: 8px;
+    max-height: 320px;
+    overflow: auto;
+}
+
+.model-setting {
+    display: grid;
+    grid-template-columns: minmax(130px, 1fr) 130px 90px;
+    gap: 10px;
+    align-items: center;
+}
+
+.model-setting label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+@media (max-width: 640px) {
+    .settings-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .model-setting {
+        grid-template-columns: 1fr 110px 80px;
+    }
 }
 
 .legend {

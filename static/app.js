@@ -1,4 +1,8 @@
-const gpus = window.GPUS || [];
+let gpus = window.GPUS || [];
+const kasMode = Boolean(window.KAS_MODE);
+let csrfToken = "";
+let currentUser = null;
+let userSettings = null;
 const overviewBody = document.querySelector("#gpus tbody");
 const newListingsBody = document.querySelector("#newListings tbody");
 const newListingsCount = document.querySelector("#newListingsCount");
@@ -8,6 +12,17 @@ const detail = document.querySelector("#detail");
 const detailTitle = document.querySelector("#detailTitle");
 const listingsBody = document.querySelector("#listings tbody");
 const catFilter = document.querySelector("#catFilter");
+const accountStatus = document.querySelector("#accountStatus");
+const loginButton = document.querySelector("#loginButton");
+const settingsButton = document.querySelector("#settingsButton");
+const logoutButton = document.querySelector("#logoutButton");
+const loginDialog = document.querySelector("#loginDialog");
+const settingsDialog = document.querySelector("#settingsDialog");
+const loginForm = document.querySelector("#loginForm");
+const settingsForm = document.querySelector("#settingsForm");
+const opportunitiesPanel = document.querySelector("#opportunitiesPanel");
+const opportunitiesBody = document.querySelector("#opportunities tbody");
+const opportunityCount = document.querySelector("#opportunityCount");
 
 const euro = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE") + " \u20ac";
 const score = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE");
@@ -44,12 +59,60 @@ function ageLabel(ts) {
     return `<span class="age ${cls}">${txt}</span>`;
 }
 
-// Precompute sortable listing dates plus exact first-seen timestamps.
-gpus.forEach(g => (g.listings || []).forEach(l => {
-    l._ts = parseDMY(l.date);
-    l._seen = parseFirstSeen(l.firstSeen);
-    l._ageTs = l._ts !== null ? l._ts : l._seen;
-}));
+function prepareListingMetadata() {
+    gpus.forEach(g => (g.listings || []).forEach(l => {
+        l._ts = parseDMY(l.date);
+        l._seen = parseFirstSeen(l.firstSeen);
+        l._ageTs = l._ts !== null ? l._ts : l._seen;
+    }));
+    applyMarketWindow();
+}
+
+function medianNumber(values) {
+    const sorted = values.slice().sort((a, b) => a - b);
+    if (!sorted.length) return null;
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2
+        ? sorted[middle]
+        : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function robustLowNumber(values) {
+    const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+    if (!sorted.length) return null;
+    if (sorted.length < 3) return sorted[0];
+    const floor = medianNumber(sorted) * 0.5;
+    return sorted.find(item => item >= floor) ?? sorted[0];
+}
+
+function applyMarketWindow() {
+    const configuredDays = userSettings?.global?.marketWindowDays;
+    if (!kasMode && configuredDays === undefined) return;
+    const days = Number(configuredDays || 7);
+    const cutoff = Date.now() - days * 86400000;
+    gpus.forEach(g => {
+        const marketListings = (g.listings || []).filter(l =>
+            l._ageTs !== null && l._ageTs >= cutoff
+            && ["GPU", "PC"].includes(l.category)
+        );
+        const gpuPrices = marketListings.filter(l => l.category === "GPU").map(l => l.price);
+        const pcPrices = marketListings.filter(l => l.category === "PC").map(l => l.price);
+        g.gpuLowest = robustLowNumber(gpuPrices);
+        g.pcLowest = robustLowNumber(pcPrices);
+        g.gpuMedian = medianNumber(gpuPrices);
+        g.pcMedian = medianNumber(pcPrices);
+        g.gpuAverage = gpuPrices.length ? Math.round(gpuPrices.reduce((a, b) => a + b, 0) / gpuPrices.length) : null;
+        g.pcAverage = pcPrices.length ? Math.round(pcPrices.reduce((a, b) => a + b, 0) / pcPrices.length) : null;
+        g.margin = g.gpuLowest !== null && g.pcLowest !== null ? g.pcLowest - g.gpuLowest : null;
+        g.medianMargin = g.gpuMedian !== null && g.pcMedian !== null ? g.pcMedian - g.gpuMedian : null;
+        g.gpuCount = gpuPrices.length;
+        g.pcCount = pcPrices.length;
+        g.gpuValue = g.score && g.gpuLowest ? Math.round((g.score / g.gpuLowest) * 10) / 10 : null;
+        g.gpuMedianValue = g.score && g.gpuMedian
+            ? Math.round((g.score / g.gpuMedian) * 10) / 10
+            : null;
+    });
+}
 
 const AGE_WINDOWS = {
     "24h": { label: "24h", ms: 24 * 3600000 },
@@ -130,6 +193,16 @@ function escapeAttr(s) {
     return String(s).replace(/[&"<>]/g, c => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+    }[c]));
+}
+
 function listingThumb(l) {
     const src = String(l.imageUrl || "").trim();
     if (!/^https?:\/\//i.test(src)) return '<span class="thumb empty-thumb"></span>';
@@ -144,10 +217,21 @@ function listingRoom(l) {
 }
 
 function listingLink(l) {
-    const link = l.url
-        ? `<a href="${l.url}" target="_blank" rel="noopener">${l.title}</a>`
-        : l.title;
+    const safeUrl = safeExternalUrl(l.url);
+    const title = escapeHtml(l.title || "");
+    const link = safeUrl
+        ? `<a href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener">${title}</a>`
+        : title;
     return `<div class="listing-cell">${listingThumb(l)}<span class="listing-title">${link}</span></div>`;
+}
+
+function safeExternalUrl(value) {
+    try {
+        const url = new URL(String(value || ""));
+        return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+    } catch {
+        return "";
+    }
 }
 
 function withMarketContext(g, l) {
@@ -157,6 +241,104 @@ function withMarketContext(g, l) {
         _roomLow: l.category === "GPU" && g.pcLowest !== null && g.pcLowest !== undefined ? g.pcLowest - l.price : null,
         _roomMedian: l.category === "GPU" && g.pcMedian !== null && g.pcMedian !== undefined ? g.pcMedian - l.price : null,
     };
+}
+
+async function apiRequest(path, options = {}) {
+    const headers = {
+        ...(options.headers || {}),
+    };
+    if (options.body && typeof options.body !== "string") {
+        headers["Content-Type"] = "application/json";
+        options.body = JSON.stringify(options.body);
+    }
+    if (csrfToken && options.method && options.method !== "GET") {
+        headers["X-CSRF-Token"] = csrfToken;
+    }
+    const response = await fetch(path, {
+        ...options,
+        headers,
+        credentials: "same-origin",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.error || `Request failed with HTTP ${response.status}`);
+    }
+    return data;
+}
+
+function renderAccount() {
+    if (!kasMode) {
+        accountStatus.textContent = "";
+        return;
+    }
+    loginButton.classList.toggle("hidden", Boolean(currentUser));
+    settingsButton.classList.toggle("hidden", !currentUser);
+    logoutButton.classList.toggle("hidden", !currentUser);
+    accountStatus.textContent = currentUser
+        ? `Signed in as ${currentUser.email}`
+        : "Sign in to sync budgets and daily opportunities.";
+}
+
+function currentModelSetting(g) {
+    const settings = userSettings && userSettings.models || [];
+    return settings.find(item => String(item.id) === String(g.id) || item.term === g.term) || null;
+}
+
+function personalMaxFor(g) {
+    if (!userSettings) return null;
+    const model = currentModelSetting(g);
+    if (model && model.maxPrice !== null && model.maxPrice !== undefined) {
+        return Number(model.maxPrice);
+    }
+    const globalMax = userSettings.global && userSettings.global.maxPrice;
+    return globalMax === null || globalMax === undefined ? null : Number(globalMax);
+}
+
+function renderOpportunities() {
+    if (!kasMode || !currentUser || !userSettings || !opportunitiesPanel) {
+        opportunitiesPanel.classList.add("hidden");
+        return;
+    }
+    const maxAgeHours = Number(userSettings.global.opportunityMaxAgeHours || 24);
+    const cutoff = Date.now() - maxAgeHours * 3600000;
+    const rows = [];
+    gpus.forEach(g => {
+        const modelSetting = currentModelSetting(g);
+        if (modelSetting && modelSetting.enabled === false) return;
+        const maxPrice = personalMaxFor(g);
+        if (maxPrice === null || !Number.isFinite(maxPrice)) return;
+        const minimumSpread = Number(modelSetting && modelSetting.minimumSpread);
+        (g.listings || []).forEach(l => {
+            if (l.category !== "GPU" || l._ageTs === null || l._ageTs < cutoff || l.price > maxPrice) {
+                return;
+            }
+            const spread = g.pcLowest === null || g.pcLowest === undefined ? null : g.pcLowest - l.price;
+            if (Number.isFinite(minimumSpread) && minimumSpread > 0
+                && (spread === null || spread < minimumSpread)) {
+                return;
+            }
+            rows.push(withMarketContext(g, l));
+        });
+    });
+    rows.sort((a, b) => (b._roomLow || 0) - (a._roomLow || 0));
+    opportunitiesPanel.classList.remove("hidden");
+    opportunityCount.textContent = `${rows.length} within your settings`;
+    if (!rows.length) {
+        opportunitiesBody.innerHTML = '<tr><td colspan="7" class="muted empty">No recent GPU ads fit your saved budget.</td></tr>';
+        return;
+    }
+    opportunitiesBody.innerHTML = rows.map(l => {
+        const maxPrice = personalMaxFor(gpus.find(g => g.term === l.term));
+        return `<tr data-term="${escapeAttr(l.term)}">
+          <td class="datecell">${listingAgeCell(l)}</td>
+          <td>${escapeHtml(l.term)}</td>
+          <td>${listingLink(l)}</td>
+          <td class="num">${euro(l.price)}</td>
+          <td class="num ${marginClass(maxPrice - l.price)}">${euro(maxPrice - l.price)}</td>
+          <td class="num ${marginClass(l._roomLow)}">${euro(l._roomLow)}</td>
+          <td>${escapeHtml(l.city || "")}</td>
+        </tr>`;
+    }).join("");
 }
 
 function renderNewListings() {
@@ -174,16 +356,16 @@ function renderNewListings() {
         return;
     }
     newListingsBody.innerHTML = rows.map(l => {
-        const badge = `<span class="badge ${l.category === "PC" ? "pc" : "gpu"}">${l.category}</span>`;
-        return `<tr data-term="${l.term}">
+        const badge = categoryBadge(l);
+        return `<tr data-term="${escapeAttr(l.term)}">
       <td class="datecell">${listingAgeCell(l)}</td>
-      <td>${l.term}</td>
+      <td>${escapeHtml(l.term)}</td>
       <td>${badge}</td>
       <td>${listingLink(l)}</td>
       <td class="num">${euro(l.price)}</td>
       <td>${listingFlags(l) || '<span class="muted">\u2014</span>'}</td>
       <td class="num">${listingRoom(l)}</td>
-      <td>${l.city || ""}</td>
+      <td>${escapeHtml(l.city || "")}</td>
     </tr>`;
     }).join("");
 }
@@ -200,14 +382,16 @@ function renderOverview() {
         const delta = g.trend === null || g.trend === undefined
             ? ""
             : `<span class="delta ${marginClass(g.trend)}">${g.trend > 0 ? "+" : ""}${g.trend}</span>`;
-        const thin = g.margin !== null && Math.min(g.gpuCount, g.pcCount) < THIN;
-        const warn = thin ? ' <span class="warn" title="Backed by fewer than 2 ads on one side \u2013 margin may be unreliable">\u26a0</span>' : "";
+        const minimumGpu = Number(userSettings?.global?.minimumGpuSamples || THIN);
+        const minimumPc = Number(userSettings?.global?.minimumPcSamples || THIN);
+        const thin = g.margin !== null && (g.gpuCount < minimumGpu || g.pcCount < minimumPc);
+        const warn = thin ? ` <span class="warn" title="Below your minimum sample settings (${g.gpuCount} GPU, ${g.pcCount} PC ads) \u2013 margin may be unreliable">\u26a0</span>` : "";
         const med = v => v === null || v === undefined ? "" : `<span class="med" title="Median (typical) price">~${euro(v)}</span>`;
         const medValue = v => v === null || v === undefined ? "" : `<span class="med" title="Score per euro at median GPU price">~${value(v)}</span>`;
-        const scoreTitle = g.benchmarkName ? ` title="${g.benchmarkName}"` : "";
+        const scoreTitle = g.benchmarkName ? ` title="${escapeAttr(g.benchmarkName)}"` : "";
         return `
-    <tr data-term="${g.term}" class="${selected === g.term ? "selected" : ""}">
-    <td>${g.term} <a class="searchlink" href="${searchUrl(g.term, g.gpuMin, g.gpuMax)}" target="_blank" rel="noopener" title="Open '${escapeAttr(g.term)}' search on Kleinanzeigen" aria-label="Open '${escapeAttr(g.term)}' search on Kleinanzeigen">\u2197</a></td>
+    <tr data-term="${escapeAttr(g.term)}" class="${selected === g.term ? "selected" : ""}">
+    <td>${escapeHtml(g.term)} <a class="searchlink" href="${escapeAttr(searchUrl(g.term, g.gpuMin, g.gpuMax))}" target="_blank" rel="noopener" title="Open '${escapeAttr(g.term)}' search on Kleinanzeigen" aria-label="Open '${escapeAttr(g.term)}' search on Kleinanzeigen">\u2197</a></td>
             <td class="num"${scoreTitle}>${score(g.score)}</td>
       <td class="num">${euro(g.gpuLowest)}${med(g.gpuMedian)}</td>
             <td class="num valuecell">${value(g.gpuValue)}${medValue(g.gpuMedianValue)}</td>
@@ -271,7 +455,7 @@ function renderListings() {
         return;
     }
     listingsBody.innerHTML = rows.map(l => {
-        const badge = `<span class="badge ${l.category === "PC" ? "pc" : "gpu"}">${l.category}</span>`;
+        const badge = categoryBadge(l);
         const flags = listingFlags(l);
         return `<tr>
       <td>${badge}</td>
@@ -280,9 +464,21 @@ function renderListings() {
             <td>${flags || '<span class="muted">\u2014</span>'}</td>
             <td class="num">${listingRoom(l)}</td>
     <td class="datecell">${listingAgeCell(l)}</td>
-      <td>${l.city || ""}</td>
+      <td>${escapeHtml(l.city || "")}</td>
     </tr>`;
     }).join("");
+}
+
+function categoryBadge(l) {
+    const label = l.category === "REVIEW"
+        ? "Review"
+        : l.category === "BUNDLE"
+            ? "Bundle"
+            : l.category;
+    const title = l.categoryMismatch
+        ? `Originally listed under ${l.sourceCategory || "another category"}`
+        : l.classificationReasons || "";
+    return `<span class="badge ${String(l.category).toLowerCase()}" title="${escapeAttr(title)}">${label}</span>`;
 }
 
 function selectGpu(term) {
@@ -356,6 +552,7 @@ document.querySelectorAll(".age-filter").forEach(ageFilterEl => {
         });
         renderNewListings();
         renderOverview();
+        renderOpportunities();
         renderListings();
     });
 });
@@ -364,9 +561,15 @@ document.querySelectorAll(".age-filter").forEach(ageFilterEl => {
 function renderKpis() {
     const box = document.querySelector("#kpis");
     if (!box) return;
-    const margins = gpus.map(g => g.margin).filter(m => m !== null && m !== undefined);
+    const minimumGpu = Number(userSettings?.global?.minimumGpuSamples || THIN);
+    const minimumPc = Number(userSettings?.global?.minimumPcSamples || THIN);
+    const margins = gpus
+        .filter(g => g.gpuCount >= minimumGpu && g.pcCount >= minimumPc)
+        .map(g => g.margin)
+        .filter(m => m !== null && m !== undefined);
     const best = margins.length ? Math.max(...margins) : null;
-    const bestModel = best !== null ? (gpus.find(g => g.margin === best) || {}).term : null;
+    const bestModel = best !== null ? (gpus.find(g => g.margin === best
+        && g.gpuCount >= minimumGpu && g.pcCount >= minimumPc) || {}).term : null;
     const values = gpus.map(g => g.gpuValue).filter(v => v !== null && v !== undefined);
     const bestValue = values.length ? Math.max(...values) : null;
     const bestValueModel = bestValue !== null ? (gpus.find(g => g.gpuValue === bestValue) || {}).term : null;
@@ -380,12 +583,178 @@ function renderKpis() {
     box.innerHTML = cards.map(c => `
     <div class="kpi">
       <div class="kpi-val ${c.cls || ""}">${c.value}</div>
-      <div class="kpi-label">${c.label}${c.sub ? ` \u00b7 <span class="muted">${c.sub}</span>` : ""}</div>
+      <div class="kpi-label">${escapeHtml(c.label)}${c.sub ? ` \u00b7 <span class="muted">${escapeHtml(c.sub)}</span>` : ""}</div>
     </div>`).join("");
 }
 
-renderKpis();
-renderNewListings();
-renderOverview();
+async function loadSettings() {
+    const data = await apiRequest("api/settings.php");
+    userSettings = data.settings;
+    prepareListingMetadata();
+    renderKpis();
+    renderOverview();
+    renderOpportunities();
+    renderListings();
+    return userSettings;
+}
+
+function fillSettingsForm(settings) {
+    const global = settings.global || {};
+    document.querySelector("#globalMaxPrice").value = global.maxPrice ?? "";
+    document.querySelector("#opportunityAge").value = global.opportunityMaxAgeHours || 24;
+    document.querySelector("#marketWindowDays").value = global.marketWindowDays || 7;
+    document.querySelector("#minimumGpuSamples").value = global.minimumGpuSamples || 3;
+    document.querySelector("#minimumPcSamples").value = global.minimumPcSamples || 3;
+    document.querySelector("#modelSettings").innerHTML = (settings.models || []).map(model => `
+        <div class="model-setting" data-model-id="${model.id}">
+          <strong>${escapeHtml(model.term)}</strong>
+          <input class="model-max-price" type="number" min="0" step="1"
+            aria-label="${escapeAttr(`${model.term} maximum price`)}"
+            placeholder="Global" value="${model.maxPrice ?? ""}">
+          <label><input class="model-enabled" type="checkbox" ${model.enabled ? "checked" : ""}> Active</label>
+        </div>
+    `).join("");
+}
+
+async function openSettings() {
+    const error = document.querySelector("#settingsError");
+    error.textContent = "";
+    try {
+        fillSettingsForm(await loadSettings());
+        settingsDialog.showModal();
+    } catch (failure) {
+        error.textContent = failure.message;
+    }
+}
+
+if (opportunitiesBody) {
+    opportunitiesBody.addEventListener("click", e => {
+        if (e.target.closest("a")) return;
+        const row = e.target.closest("tr[data-term]");
+        if (row) selectGpu(row.dataset.term);
+    });
+}
+
+if (loginButton) {
+    loginButton.addEventListener("click", () => {
+        document.querySelector("#loginError").textContent = "";
+        loginDialog.showModal();
+        document.querySelector("#loginEmail").focus();
+    });
+}
+
+document.querySelector("#cancelLogin").addEventListener("click", () => loginDialog.close());
+document.querySelector("#cancelSettings").addEventListener("click", () => settingsDialog.close());
+settingsButton.addEventListener("click", openSettings);
+
+loginForm.addEventListener("submit", async e => {
+    e.preventDefault();
+    const error = document.querySelector("#loginError");
+    error.textContent = "";
+    try {
+        const data = await apiRequest("api/session.php", {
+            method: "POST",
+            body: {
+                email: document.querySelector("#loginEmail").value,
+                password: document.querySelector("#loginPassword").value,
+            },
+        });
+        currentUser = data.user;
+        csrfToken = data.csrfToken;
+        document.querySelector("#loginPassword").value = "";
+        loginDialog.close();
+        renderAccount();
+        await loadSettings();
+    } catch (failure) {
+        error.textContent = failure.message;
+    }
+});
+
+settingsForm.addEventListener("submit", async e => {
+    e.preventDefault();
+    const error = document.querySelector("#settingsError");
+    error.textContent = "";
+    const models = [...document.querySelectorAll(".model-setting")].map(row => ({
+        id: Number(row.dataset.modelId),
+        maxPrice: row.querySelector(".model-max-price").value,
+        enabled: row.querySelector(".model-enabled").checked,
+        minimumSpread: currentModelSetting({ id: Number(row.dataset.modelId) })?.minimumSpread ?? null,
+    }));
+    const globalMax = document.querySelector("#globalMaxPrice").value;
+    try {
+        const data = await apiRequest("api/settings.php", {
+            method: "POST",
+            body: {
+                global: {
+                    maxPrice: globalMax,
+                    opportunityMaxAgeHours: Number(document.querySelector("#opportunityAge").value),
+                    marketWindowDays: Number(document.querySelector("#marketWindowDays").value),
+                    minimumGpuSamples: Number(document.querySelector("#minimumGpuSamples").value),
+                    minimumPcSamples: Number(document.querySelector("#minimumPcSamples").value),
+                },
+                models,
+            },
+        });
+        userSettings = data.settings;
+        settingsDialog.close();
+        applyMarketWindow();
+        renderKpis();
+        renderOverview();
+        renderOpportunities();
+        renderListings();
+    } catch (failure) {
+        error.textContent = failure.message;
+    }
+});
+
+logoutButton.addEventListener("click", async () => {
+    try {
+        await apiRequest("api/session.php", { method: "DELETE" });
+        currentUser = null;
+        userSettings = null;
+        csrfToken = "";
+        renderAccount();
+        renderOpportunities();
+    } catch (failure) {
+        accountStatus.textContent = failure.message;
+    }
+});
+
+function renderApp() {
+    prepareListingMetadata();
+    renderKpis();
+    renderNewListings();
+    renderOverview();
+    renderOpportunities();
+}
+
+async function initialize() {
+    if (kasMode) {
+        try {
+            const marketData = await apiRequest("api/market.php");
+            gpus = marketData.models || [];
+            if (marketData.updated) {
+                const updated = new Date(marketData.updated);
+                document.querySelector("#updated").textContent = Number.isNaN(updated.getTime())
+                    ? marketData.updated
+                    : updated.toLocaleString("de-DE");
+            }
+        } catch (failure) {
+            accountStatus.textContent = `Market data unavailable: ${failure.message}`;
+        }
+        try {
+            const session = await apiRequest("api/session.php");
+            currentUser = session.user;
+            csrfToken = session.csrfToken;
+            if (currentUser) await loadSettings();
+        } catch (failure) {
+            accountStatus.textContent = `Sign-in unavailable: ${failure.message}`;
+        }
+        renderAccount();
+    }
+    renderApp();
+}
+
+initialize();
 
 
