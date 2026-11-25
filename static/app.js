@@ -8,6 +8,7 @@ const newListingsBody = document.querySelector("#newListings tbody");
 const newListingsCount = document.querySelector("#newListingsCount");
 const newListingsPanel = document.querySelector("#newListingsPanel");
 const toggleNewListings = document.querySelector("#toggleNewListings");
+const toggleLifecycleOnly = document.querySelector("#toggleLifecycleOnly");
 const detail = document.querySelector("#detail");
 const detailTitle = document.querySelector("#detailTitle");
 const listingsBody = document.querySelector("#listings tbody");
@@ -15,11 +16,14 @@ const catFilter = document.querySelector("#catFilter");
 const accountStatus = document.querySelector("#accountStatus");
 const loginButton = document.querySelector("#loginButton");
 const settingsButton = document.querySelector("#settingsButton");
+const searchConfigButton = document.querySelector("#searchConfigButton");
 const logoutButton = document.querySelector("#logoutButton");
 const loginDialog = document.querySelector("#loginDialog");
 const settingsDialog = document.querySelector("#settingsDialog");
+const searchConfigDialog = document.querySelector("#searchConfigDialog");
 const loginForm = document.querySelector("#loginForm");
 const settingsForm = document.querySelector("#settingsForm");
+const searchConfigForm = document.querySelector("#searchConfigForm");
 const opportunitiesPanel = document.querySelector("#opportunitiesPanel");
 const opportunitiesBody = document.querySelector("#opportunities tbody");
 const opportunityCount = document.querySelector("#opportunityCount");
@@ -64,6 +68,9 @@ function prepareListingMetadata() {
         l._ts = parseDMY(l.date);
         l._seen = parseFirstSeen(l.firstSeen);
         l._ageTs = l._ts !== null ? l._ts : l._seen;
+        l._lifecycleTs = l.isPriceDrop || l.isPriceIncrease
+            ? parseFirstSeen(l.lastSeen)
+            : l.isNew ? l._seen : null;
     }));
     applyMarketWindow();
 }
@@ -130,6 +137,14 @@ function isInAgeWindow(l) {
     return selectedAgeWindow.ms === null || (l._ageTs !== null && l._ageTs >= Date.now() - selectedAgeWindow.ms);
 }
 
+function isInLifecycleWindow(l) {
+    const selectedAgeWindow = activeAgeWindow();
+    return selectedAgeWindow.ms === null
+        || (l._lifecycleTs !== null
+            && l._lifecycleTs !== undefined
+            && l._lifecycleTs >= Date.now() - selectedAgeWindow.ms);
+}
+
 function ageWindowText() {
     const selectedAgeWindow = activeAgeWindow();
     return selectedAgeWindow.ms === null ? "all listings" : `listings in the last ${selectedAgeWindow.label}`;
@@ -160,6 +175,7 @@ let selected = null;
 let listingSort = { key: "price", dir: 1 };
 let category = "ALL";
 let ageFilter = "24h";
+let lifecycleOnly = false;
 
 // Market depth per side: few comparable ads -> fragile lowest price / margin.
 function depthClass(n) {
@@ -183,10 +199,21 @@ function sortRows(rows, key, dir) {
 
 function listingFlags(l) {
     return [
+        l.isNewlyPosted ? '<span class="tag new">New</span>' :
+            l.isNew ? '<span class="tag seen">New to scraper</span>' : "",
+        l.isPriceDrop ? `<span class="tag drop">${escapeHtml(euro(l.priceChange))}</span>` :
+            l.isPriceIncrease ? `<span class="tag increase">+${escapeHtml(euro(l.priceChange))}</span>` : "",
         l.negotiable ? '<span class="tag">VB</span>' : "",
         l.delivery ? '<span class="tag ship">Versand</span>' : "",
         l.instantBuy ? '<span class="tag buy">Direkt</span>' : "",
     ].filter(Boolean).join("");
+}
+
+function listingPrice(l) {
+    const previous = l.previousPrice === null || l.previousPrice === undefined
+        ? ""
+        : `<span class="previous-price">${escapeHtml(euro(l.previousPrice))}</span>`;
+    return `<span class="listing-price"><span>${euro(l.price)}</span>${previous}</span>`;
 }
 
 function escapeAttr(s) {
@@ -273,6 +300,7 @@ function renderAccount() {
     }
     loginButton.classList.toggle("hidden", Boolean(currentUser));
     settingsButton.classList.toggle("hidden", !currentUser);
+    searchConfigButton.classList.toggle("hidden", !currentUser);
     logoutButton.classList.toggle("hidden", !currentUser);
     accountStatus.textContent = currentUser
         ? `Signed in as ${currentUser.email}`
@@ -320,7 +348,13 @@ function renderOpportunities() {
             rows.push(withMarketContext(g, l));
         });
     });
-    rows.sort((a, b) => (b._roomLow || 0) - (a._roomLow || 0));
+    rows.sort((a, b) => {
+        const lifecycleRank = item =>
+            (item.isPriceDrop ? 2000000 : 0)
+            + (item.isNewlyPosted ? 1000000 : item.isNew ? 500000 : 0)
+            + (item._roomLow || 0);
+        return lifecycleRank(b) - lifecycleRank(a);
+    });
     opportunitiesPanel.classList.remove("hidden");
     opportunityCount.textContent = `${rows.length} within your settings`;
     if (!rows.length) {
@@ -333,7 +367,7 @@ function renderOpportunities() {
           <td class="datecell">${listingAgeCell(l)}</td>
           <td>${escapeHtml(l.term)}</td>
           <td>${listingLink(l)}</td>
-          <td class="num">${euro(l.price)}</td>
+          <td class="num">${listingPrice(l)}</td>
           <td class="num ${marginClass(maxPrice - l.price)}">${euro(maxPrice - l.price)}</td>
           <td class="num ${marginClass(l._roomLow)}">${euro(l._roomLow)}</td>
           <td>${escapeHtml(l.city || "")}</td>
@@ -344,8 +378,10 @@ function renderOpportunities() {
 function renderNewListings() {
     const rows = sortRows(
         gpus.flatMap(g => (g.listings || []).map(l => withMarketContext(g, l)))
-            .filter(isInAgeWindow),
-        newListingsSort.key, newListingsSort.dir
+            .filter(l => lifecycleOnly ? isInLifecycleWindow(l) : isInAgeWindow(l))
+            .filter(l => !lifecycleOnly || l.isNew || l.isPriceDrop || l.isPriceIncrease),
+        newListingsSort.key === "_ageTs" && lifecycleOnly ? "_lifecycleTs" : newListingsSort.key,
+        newListingsSort.dir
     );
     if (newListingsCount) {
         newListingsCount.textContent = `${rows.length} ${ageWindowText()}`;
@@ -362,7 +398,7 @@ function renderNewListings() {
       <td>${escapeHtml(l.term)}</td>
       <td>${badge}</td>
       <td>${listingLink(l)}</td>
-      <td class="num">${euro(l.price)}</td>
+      <td class="num">${listingPrice(l)}</td>
       <td>${listingFlags(l) || '<span class="muted">\u2014</span>'}</td>
       <td class="num">${listingRoom(l)}</td>
       <td>${escapeHtml(l.city || "")}</td>
@@ -447,7 +483,8 @@ function renderListings() {
     const valueInfo = g.score ? ` \u00b7 score ${score(g.score)}${g.gpuValue ? ` \u00b7 ${value(g.gpuValue)}` : ""}` : "";
     detailTitle.textContent = `${g.term} \u2014 listings${valueInfo}`;
     let data = g.listings.filter(l => category === "ALL" || l.category === category);
-    data = data.filter(isInAgeWindow);
+    data = data.filter(l => lifecycleOnly ? isInLifecycleWindow(l) : isInAgeWindow(l));
+    data = data.filter(l => !lifecycleOnly || l.isNew || l.isPriceDrop || l.isPriceIncrease);
     data = data.map(l => withMarketContext(g, l));
     const rows = sortRows(data, listingSort.key, listingSort.dir);
     if (!rows.length) {
@@ -460,7 +497,7 @@ function renderListings() {
         return `<tr>
       <td>${badge}</td>
         <td>${listingLink(l)}</td>
-      <td class="num">${euro(l.price)}</td>
+      <td class="num">${listingPrice(l)}</td>
             <td>${flags || '<span class="muted">\u2014</span>'}</td>
             <td class="num">${listingRoom(l)}</td>
     <td class="datecell">${listingAgeCell(l)}</td>
@@ -509,6 +546,18 @@ if (toggleNewListings && newListingsPanel) {
         const isHidden = newListingsPanel.classList.toggle("hidden");
         toggleNewListings.textContent = isHidden ? "Show listings" : "Hide listings";
         if (!isHidden) newListingsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+}
+
+if (toggleLifecycleOnly) {
+    toggleLifecycleOnly.addEventListener("click", () => {
+        lifecycleOnly = !lifecycleOnly;
+        toggleLifecycleOnly.classList.toggle("active", lifecycleOnly);
+        toggleLifecycleOnly.textContent = lifecycleOnly
+            ? "Show all listings"
+            : "New & price changes";
+        renderNewListings();
+        renderListings();
     });
 }
 
@@ -627,6 +676,74 @@ async function openSettings() {
     }
 }
 
+function clearSearchForm() {
+    document.querySelector("#searchConfigId").value = "";
+    document.querySelector("#searchTerm").value = "";
+    document.querySelector("#searchCategory").value = "GPU";
+    document.querySelector("#searchMinPrice").value = "";
+    document.querySelector("#searchMaxPrice").value = "";
+    document.querySelector("#searchMaxAge").value = "";
+    document.querySelector("#searchExcludes").value = "";
+    document.querySelector("#searchActive").checked = true;
+    document.querySelector("#saveSearchConfig").textContent = "Add search";
+    document.querySelector("#searchConfigError").textContent = "";
+}
+
+function editSearch(search) {
+    document.querySelector("#searchConfigId").value = search.id;
+    document.querySelector("#searchTerm").value = search.term;
+    document.querySelector("#searchCategory").value = search.category;
+    document.querySelector("#searchMinPrice").value = search.minPrice ?? "";
+    document.querySelector("#searchMaxPrice").value = search.maxPrice ?? "";
+    document.querySelector("#searchMaxAge").value = search.maxAgeDays ?? "";
+    document.querySelector("#searchExcludes").value = search.excludeTerms || "";
+    document.querySelector("#searchActive").checked = Boolean(search.active);
+    document.querySelector("#saveSearchConfig").textContent = "Save search";
+    searchConfigDialog.scrollTop = 0;
+    document.querySelector("#searchTerm").focus();
+}
+
+function renderSearchConfigs(searches) {
+    const body = document.querySelector("#searchConfigRows");
+    if (!searches.length) {
+        body.innerHTML = '<tr><td colspan="6" class="muted empty">No KAS search terms yet. Add GPU and PC rows for each model.</td></tr>';
+        return;
+    }
+    body.innerHTML = searches.map(search => {
+        const min = search.minPrice === null ? "" : euro(search.minPrice);
+        const max = search.maxPrice === null ? "" : euro(search.maxPrice);
+        const range = min || max ? `${min || "any"} – ${max || "any"}` : "Any";
+        const json = escapeAttr(JSON.stringify(search));
+        return `<tr data-search-id="${search.id}" data-search="${json}">
+          <td>${escapeHtml(search.term)}</td>
+          <td><span class="badge ${search.category.toLowerCase()}">${search.category}</span></td>
+          <td>${escapeHtml(range)}</td>
+          <td>${search.maxAgeDays ? `${search.maxAgeDays}d` : "Any"}</td>
+          <td><span class="tag ${search.active ? "new" : ""}">${search.active ? "Active" : "Off"}</span></td>
+          <td><div class="row-actions">
+            <button type="button" data-action="edit">Edit</button>
+            <button type="button" data-action="delete" class="danger">Delete</button>
+          </div></td>
+        </tr>`;
+    }).join("");
+}
+
+async function loadSearchConfigs() {
+    const data = await apiRequest("api/search-config.php");
+    renderSearchConfigs(data.searches || []);
+}
+
+async function openSearchConfig() {
+    clearSearchForm();
+    try {
+        await loadSearchConfigs();
+        searchConfigDialog.showModal();
+    } catch (failure) {
+        document.querySelector("#searchConfigError").textContent = failure.message;
+        searchConfigDialog.showModal();
+    }
+}
+
 if (opportunitiesBody) {
     opportunitiesBody.addEventListener("click", e => {
         if (e.target.closest("a")) return;
@@ -646,6 +763,9 @@ if (loginButton) {
 document.querySelector("#cancelLogin").addEventListener("click", () => loginDialog.close());
 document.querySelector("#cancelSettings").addEventListener("click", () => settingsDialog.close());
 settingsButton.addEventListener("click", openSettings);
+searchConfigButton.addEventListener("click", openSearchConfig);
+document.querySelector("#closeSearchConfig").addEventListener("click", () => searchConfigDialog.close());
+document.querySelector("#clearSearchForm").addEventListener("click", clearSearchForm);
 
 loginForm.addEventListener("submit", async e => {
     e.preventDefault();
@@ -704,6 +824,55 @@ settingsForm.addEventListener("submit", async e => {
         renderListings();
     } catch (failure) {
         error.textContent = failure.message;
+    }
+});
+
+searchConfigForm.addEventListener("submit", async e => {
+    e.preventDefault();
+    const error = document.querySelector("#searchConfigError");
+    error.textContent = "";
+    const id = document.querySelector("#searchConfigId").value;
+    try {
+        const data = await apiRequest("api/search-config.php", {
+            method: "POST",
+            body: {
+                id: id ? Number(id) : null,
+                term: document.querySelector("#searchTerm").value.trim(),
+                category: document.querySelector("#searchCategory").value,
+                minPrice: document.querySelector("#searchMinPrice").value,
+                maxPrice: document.querySelector("#searchMaxPrice").value,
+                maxAgeDays: document.querySelector("#searchMaxAge").value,
+                excludeTerms: document.querySelector("#searchExcludes").value,
+                active: document.querySelector("#searchActive").checked,
+            },
+        });
+        renderSearchConfigs(data.searches || []);
+        clearSearchForm();
+    } catch (failure) {
+        error.textContent = failure.message;
+    }
+});
+
+document.querySelector("#searchConfigRows").addEventListener("click", async e => {
+    const button = e.target.closest("button[data-action]");
+    const row = button && button.closest("tr[data-search]");
+    if (!button || !row) return;
+    const search = JSON.parse(row.dataset.search);
+    if (button.dataset.action === "edit") {
+        editSearch(search);
+        return;
+    }
+    if (!window.confirm(`Delete search "${search.term}" (${search.category})?`)) return;
+    try {
+        const data = await apiRequest(`api/search-config.php?id=${search.id}`, {
+            method: "DELETE",
+        });
+        renderSearchConfigs(data.searches || []);
+        if (String(document.querySelector("#searchConfigId").value) === String(search.id)) {
+            clearSearchForm();
+        }
+    } catch (failure) {
+        document.querySelector("#searchConfigError").textContent = failure.message;
     }
 });
 

@@ -1,12 +1,15 @@
 :root {
-    --bg: #0f1115;
-    --panel: #171a21;
-    --line: #262b36;
-    --text: #e6e9ef;
-    --muted: #8b93a3;
-    --pos: #2fbf71;
-    --neg: #e05353;
-    --accent: #4f8cff;
+    --bg: #f5f7fa;
+    --panel: #ffffff;
+    --panel-soft: #f9fbfd;
+    --line: #dce3ec;
+    --line-strong: #cbd5e1;
+    --text: #1f2937;
+    --muted: #64748b;
+    --pos: #138a55;
+    --neg: #c2414b;
+    --accent: #2563eb;
+    --accent-soft: #eaf2ff;
 }
 
 * {
@@ -21,12 +24,15 @@ body {
 }
 
 header {
-    padding: 24px 24px 8px;
+    padding: 28px 24px 10px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    border-bottom: 1px solid var(--line);
 }
 
 h1 {
     margin: 0 0 4px;
-    font-size: 20px;
+    font-size: 24px;
+    letter-spacing: -0.02em;
 }
 
 .sub {
@@ -51,6 +57,7 @@ h1 {
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 12px 14px;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 5%);
 }
 
 .kpi-val {
@@ -81,6 +88,7 @@ h1 {
     display: flex;
     justify-content: flex-end;
     padding: 12px 24px 4px;
+    gap: 8px;
 }
 
 .quick-actions button {
@@ -95,6 +103,12 @@ h1 {
 
 .quick-actions button:hover {
     border-color: var(--accent);
+}
+
+.quick-actions button.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
 }
 
 .account-bar {
@@ -176,6 +190,7 @@ table {
     border: 1px solid var(--line);
     border-radius: 8px;
     overflow: hidden;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
 }
 
 .section-head {
@@ -236,7 +251,7 @@ th.sorted-desc::after {
 }
 
 tbody tr:hover {
-    background: #1d212b;
+    background: #f2f6fc;
 }
 
 td a {
@@ -274,7 +289,7 @@ td a:hover {
     object-fit: cover;
     border-radius: 6px;
     border: 1px solid var(--line);
-    background: #10131a;
+    background: #eef2f7;
 }
 
 .empty-thumb {
@@ -296,24 +311,39 @@ td a:hover {
     padding: 0 6px;
     font-size: 11px;
     border-radius: 4px;
-    background: #22303f;
-    color: var(--muted);
+    background: #edf2f7;
+    color: #4b5a70;
 }
 
 .tag.new {
-    background: #123027;
-    color: #64d6a4;
+    background: #e7f7ee;
+    color: #16734a;
     font-weight: 600;
 }
 
+.tag.seen {
+    background: #eaf2ff;
+    color: #1d5fbf;
+}
+
+.tag.drop {
+    background: #e4f7ed;
+    color: #157347;
+}
+
+.tag.increase {
+    background: #fdebed;
+    color: #b23b49;
+}
+
 .tag.ship {
-    background: #143043;
-    color: #7fc7ff;
+    background: #e6f2fb;
+    color: #176b9c;
 }
 
 .tag.buy {
-    background: #352811;
-    color: #e0a94f;
+    background: #fff5d9;
+    color: #8b5b08;
 }
 
 .newpill {
@@ -323,8 +353,20 @@ td a:hover {
     font-size: 11px;
     font-weight: 600;
     border-radius: 4px;
-    background: #123027;
-    color: #64d6a4;
+    background: #e7f7ee;
+    color: #16734a;
+}
+
+.listing-price {
+    display: inline-grid;
+    justify-items: end;
+    gap: 1px;
+}
+
+.previous-price {
+    color: var(--muted);
+    font-size: 11px;
+    text-decoration: line-through;
 }
 
 .empty {
@@ -354,7 +396,7 @@ td a:hover {
 }
 
 .overview tbody tr.selected {
-    background: #243044;
+    background: var(--accent-soft);
 }
 
 .hidden {
@@ -419,23 +461,23 @@ td a:hover {
 }
 
 .badge.pc {
-    background: #2a2140;
-    color: #b79cff;
+    background: #f1eafe;
+    color: #7048aa;
 }
 
 .badge.gpu {
-    background: #123027;
-    color: #64d6a4;
+    background: #e4f7ed;
+    color: #157347;
 }
 
 .badge.bundle {
-    background: #3a2c10;
-    color: #e0c04f;
+    background: #fff4d7;
+    color: #8b6508;
 }
 
 .badge.review {
-    background: #3b2528;
-    color: #ef9aa6;
+    background: #fdebed;
+    color: #b23b49;
 }
 
 .datecell {
@@ -452,7 +494,7 @@ td a:hover {
 }
 
 .depth.shallow {
-    color: #e0c04f;
+    color: #9a6700;
 }
 
 .depth.deep {
@@ -460,7 +502,7 @@ td a:hover {
 }
 
 .warn {
-    color: #e0c04f;
+    color: #9a6700;
     cursor: help;
 }
 
@@ -489,18 +531,18 @@ td a:hover {
 }
 
 .age.fresh {
-    background: #123027;
-    color: #64d6a4;
+    background: #e4f7ed;
+    color: #157347;
 }
 
 .age.recent {
-    background: #2c2a16;
-    color: #e0c04f;
+    background: #fff4d7;
+    color: #8b6508;
 }
 
 .age.stale {
-    background: #2a1c1c;
-    color: #d68a8a;
+    background: #f8e9eb;
+    color: #a94452;
 }
 
 .trend {
@@ -544,6 +586,7 @@ td a:hover {
     border: 1px solid var(--line);
     border-radius: 10px;
     padding: 0;
+    box-shadow: 0 18px 50px rgb(15 23 42 / 22%);
 }
 
 .dialog::backdrop {
@@ -567,7 +610,8 @@ td a:hover {
     color: var(--muted);
 }
 
-.dialog input {
+.dialog input,
+.dialog select {
     width: 100%;
     padding: 8px 10px;
     background: var(--bg);
@@ -593,10 +637,67 @@ td a:hover {
     width: min(720px, calc(100% - 32px));
 }
 
+.search-dialog {
+    width: min(920px, calc(100% - 32px));
+}
+
+.dialog-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+}
+
 .settings-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+}
+
+.search-form-grid {
+    display: grid;
+    grid-template-columns: 2fr 0.8fr repeat(3, 1fr);
+    gap: 10px;
+    align-items: end;
+}
+
+.inline-check {
+    display: flex !important;
+    align-items: center;
+    min-height: 38px;
+}
+
+.search-table-wrap {
+    max-height: 360px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+.search-config-table {
+    width: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+}
+
+.search-config-table .row-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.search-config-table button {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 4px 8px;
+    cursor: pointer;
+}
+
+.search-config-table button.danger {
+    color: var(--neg);
 }
 
 .model-settings {
@@ -626,6 +727,16 @@ td a:hover {
 
     .model-setting {
         grid-template-columns: 1fr 110px 80px;
+    }
+
+    .search-form-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .dialog-title-row {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 4px;
     }
 }
 
