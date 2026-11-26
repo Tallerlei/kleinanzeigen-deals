@@ -3,6 +3,8 @@ const kasMode = Boolean(window.KAS_MODE);
 let csrfToken = "";
 let currentUser = null;
 let userSettings = null;
+let ignoredListings = [];
+let ignoreAvailable = true;
 const overviewBody = document.querySelector("#gpus tbody");
 const newListingsBody = document.querySelector("#newListings tbody");
 const newListingsCount = document.querySelector("#newListingsCount");
@@ -13,20 +15,25 @@ const detail = document.querySelector("#detail");
 const detailTitle = document.querySelector("#detailTitle");
 const listingsBody = document.querySelector("#listings tbody");
 const catFilter = document.querySelector("#catFilter");
+const detailListingsTable = document.querySelector("#listings");
 const accountStatus = document.querySelector("#accountStatus");
 const loginButton = document.querySelector("#loginButton");
 const settingsButton = document.querySelector("#settingsButton");
 const searchConfigButton = document.querySelector("#searchConfigButton");
+const ignoredButton = document.querySelector("#ignoredButton");
 const logoutButton = document.querySelector("#logoutButton");
 const loginDialog = document.querySelector("#loginDialog");
 const settingsDialog = document.querySelector("#settingsDialog");
 const searchConfigDialog = document.querySelector("#searchConfigDialog");
+const ignoredDialog = document.querySelector("#ignoredDialog");
 const loginForm = document.querySelector("#loginForm");
 const settingsForm = document.querySelector("#settingsForm");
 const searchConfigForm = document.querySelector("#searchConfigForm");
 const opportunitiesPanel = document.querySelector("#opportunitiesPanel");
 const opportunitiesBody = document.querySelector("#opportunities tbody");
 const opportunityCount = document.querySelector("#opportunityCount");
+const opportunityWindowNote = document.querySelector("#opportunityWindowNote");
+const marketWindowNote = document.querySelector("#marketWindowNote");
 
 const euro = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE") + " \u20ac";
 const score = n => (n === null || n === undefined) ? "\u2014" : n.toLocaleString("de-DE");
@@ -147,7 +154,25 @@ function isInLifecycleWindow(l) {
 
 function ageWindowText() {
     const selectedAgeWindow = activeAgeWindow();
-    return selectedAgeWindow.ms === null ? "all listings" : `listings in the last ${selectedAgeWindow.label}`;
+    return selectedAgeWindow.ms === null ? "all retained listings" : `ads posted in the last ${selectedAgeWindow.label}`;
+}
+
+function marketWindowDays() {
+    return Number(userSettings?.global?.marketWindowDays || 7);
+}
+
+function opportunityWindowHours() {
+    return Number(userSettings?.global?.opportunityMaxAgeHours || 24);
+}
+
+function renderWindowNotes() {
+    if (opportunityWindowNote) {
+        const hours = opportunityWindowHours();
+        opportunityWindowNote.textContent = `Actionable age: ${hours}h from posting; market prices stay broad`;
+    }
+    if (marketWindowNote) {
+        marketWindowNote.textContent = `Market calculations: last ${marketWindowDays()} days`;
+    }
 }
 
 function listingAgeCell(l) {
@@ -249,7 +274,10 @@ function listingLink(l) {
     const link = safeUrl
         ? `<a href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener">${title}</a>`
         : title;
-    return `<div class="listing-cell">${listingThumb(l)}<span class="listing-title">${link}</span></div>`;
+    const ignore = currentUser && kasMode && ignoreAvailable
+        ? `<div class="listing-actions"><button type="button" class="listing-ignore" data-ignore-ad="${escapeAttr(l.id)}">${l.ignored ? "Show in opportunities" : "Hide from opportunities"}</button></div>`
+        : "";
+    return `<div class="listing-cell">${listingThumb(l)}<span class="listing-title">${link}${ignore}</span></div>`;
 }
 
 function safeExternalUrl(value) {
@@ -293,6 +321,52 @@ async function apiRequest(path, options = {}) {
     return data;
 }
 
+async function reloadMarket() {
+    const data = await apiRequest("api/market.php");
+    gpus = data.models || [];
+    ignoredListings = data.ignoredListings || [];
+    ignoreAvailable = data.ignoreAvailable !== false;
+    prepareListingMetadata();
+    renderApp();
+    return data;
+}
+
+async function ignoreListing(adId) {
+    const listing = gpus.flatMap(model => model.listings || []).find(item => item.id === adId);
+    if (listing?.ignored) {
+        await restoreListing(adId);
+        return;
+    }
+    await apiRequest("api/listing-action.php", {
+        method: "POST",
+        body: { action: "IGNORE", adId },
+    });
+    await reloadMarket();
+}
+
+async function restoreListing(adId) {
+    await apiRequest(`api/listing-action.php?adId=${encodeURIComponent(adId)}`, {
+        method: "DELETE",
+    });
+    await reloadMarket();
+    renderIgnoredListings();
+}
+
+function renderIgnoredListings() {
+    const box = document.querySelector("#ignoredListings");
+    const empty = document.querySelector("#ignoredEmpty");
+    empty.classList.toggle("hidden", ignoredListings.length > 0);
+    box.innerHTML = ignoredListings.map(listing => `
+      <div class="ignored-row">
+        <div class="ignored-title">
+          ${listingLink({ ...listing, id: "" })}
+          <span class="muted">${escapeHtml(listing.term || "")} · ${euro(listing.price)} · hidden from opportunities since ${escapeHtml(listing.ignoredAt || "")}</span>
+        </div>
+        <button type="button" data-restore-ad="${escapeAttr(listing.id)}">Restore</button>
+      </div>
+    `).join("");
+}
+
 function renderAccount() {
     if (!kasMode) {
         accountStatus.textContent = "";
@@ -301,6 +375,7 @@ function renderAccount() {
     loginButton.classList.toggle("hidden", Boolean(currentUser));
     settingsButton.classList.toggle("hidden", !currentUser);
     searchConfigButton.classList.toggle("hidden", !currentUser);
+    ignoredButton.classList.toggle("hidden", !currentUser || !ignoreAvailable);
     logoutButton.classList.toggle("hidden", !currentUser);
     accountStatus.textContent = currentUser
         ? `Signed in as ${currentUser.email}`
@@ -327,7 +402,7 @@ function renderOpportunities() {
         opportunitiesPanel.classList.add("hidden");
         return;
     }
-    const maxAgeHours = Number(userSettings.global.opportunityMaxAgeHours || 24);
+    const maxAgeHours = opportunityWindowHours();
     const cutoff = Date.now() - maxAgeHours * 3600000;
     const rows = [];
     gpus.forEach(g => {
@@ -337,7 +412,7 @@ function renderOpportunities() {
         if (maxPrice === null || !Number.isFinite(maxPrice)) return;
         const minimumSpread = Number(modelSetting && modelSetting.minimumSpread);
         (g.listings || []).forEach(l => {
-            if (l.category !== "GPU" || l._ageTs === null || l._ageTs < cutoff || l.price > maxPrice) {
+            if (l.ignored || l.category !== "GPU" || l._ageTs === null || l._ageTs < cutoff || l.price > maxPrice) {
                 return;
             }
             const spread = g.pcLowest === null || g.pcLowest === undefined ? null : g.pcLowest - l.price;
@@ -364,13 +439,13 @@ function renderOpportunities() {
     opportunitiesBody.innerHTML = rows.map(l => {
         const maxPrice = personalMaxFor(gpus.find(g => g.term === l.term));
         return `<tr data-term="${escapeAttr(l.term)}">
-          <td class="datecell">${listingAgeCell(l)}</td>
-          <td>${escapeHtml(l.term)}</td>
-          <td>${listingLink(l)}</td>
-          <td class="num">${listingPrice(l)}</td>
-          <td class="num ${marginClass(maxPrice - l.price)}">${euro(maxPrice - l.price)}</td>
-          <td class="num ${marginClass(l._roomLow)}">${euro(l._roomLow)}</td>
-          <td>${escapeHtml(l.city || "")}</td>
+          <td data-label="Date" class="datecell">${listingAgeCell(l)}</td>
+          <td data-label="GPU">${escapeHtml(l.term)}</td>
+          <td data-label="Listing" class="mobile-wide">${listingLink(l)}</td>
+          <td data-label="Price" class="num">${listingPrice(l)}</td>
+          <td data-label="Budget left" class="num ${marginClass(maxPrice - l.price)}">${euro(maxPrice - l.price)}</td>
+          <td data-label="Gross spread" class="num ${marginClass(l._roomLow)}">${euro(l._roomLow)}</td>
+          <td data-label="City">${escapeHtml(l.city || "")}</td>
         </tr>`;
     }).join("");
 }
@@ -384,7 +459,9 @@ function renderNewListings() {
         newListingsSort.dir
     );
     if (newListingsCount) {
-        newListingsCount.textContent = `${rows.length} ${ageWindowText()}`;
+        newListingsCount.textContent = lifecycleOnly
+            ? `${rows.length} new or changed in the selected event window`
+            : `${rows.length} ${ageWindowText()}`;
     }
     if (!newListingsBody) return;
     if (!rows.length) {
@@ -394,14 +471,14 @@ function renderNewListings() {
     newListingsBody.innerHTML = rows.map(l => {
         const badge = categoryBadge(l);
         return `<tr data-term="${escapeAttr(l.term)}">
-      <td class="datecell">${listingAgeCell(l)}</td>
-      <td>${escapeHtml(l.term)}</td>
-      <td>${badge}</td>
-      <td>${listingLink(l)}</td>
-      <td class="num">${listingPrice(l)}</td>
-      <td>${listingFlags(l) || '<span class="muted">\u2014</span>'}</td>
-      <td class="num">${listingRoom(l)}</td>
-      <td>${escapeHtml(l.city || "")}</td>
+      <td data-label="Posted" class="datecell">${listingAgeCell(l)}</td>
+      <td data-label="GPU">${escapeHtml(l.term)}</td>
+      <td data-label="Type">${badge}</td>
+      <td data-label="Listing" class="mobile-wide">${listingLink(l)}</td>
+      <td data-label="Price" class="num">${listingPrice(l)}</td>
+      <td data-label="Options">${listingFlags(l) || '<span class="muted">\u2014</span>'}</td>
+      <td data-label="Room" class="num">${listingRoom(l)}</td>
+      <td data-label="City">${escapeHtml(l.city || "")}</td>
     </tr>`;
     }).join("");
 }
@@ -427,15 +504,15 @@ function renderOverview() {
         const scoreTitle = g.benchmarkName ? ` title="${escapeAttr(g.benchmarkName)}"` : "";
         return `
     <tr data-term="${escapeAttr(g.term)}" class="${selected === g.term ? "selected" : ""}">
-    <td>${escapeHtml(g.term)} <a class="searchlink" href="${escapeAttr(searchUrl(g.term, g.gpuMin, g.gpuMax))}" target="_blank" rel="noopener" title="Open '${escapeAttr(g.term)}' search on Kleinanzeigen" aria-label="Open '${escapeAttr(g.term)}' search on Kleinanzeigen">\u2197</a></td>
-            <td class="num"${scoreTitle}>${score(g.score)}</td>
-      <td class="num">${euro(g.gpuLowest)}${med(g.gpuMedian)}</td>
-            <td class="num valuecell">${value(g.gpuValue)}${medValue(g.gpuMedianValue)}</td>
-      <td class="num">${euro(g.pcLowest)}${med(g.pcMedian)}</td>
-      <td class="num ${marginClass(g.margin)}">${euro(g.margin)}${warn}${med(g.medianMargin)}</td>
-      <td class="num trend">${spark}${delta}</td>
-            <td class="num depth ${depthClass(g.gpuCount)}">${g.gpuCount}${g._ageGpu ? ` <span class="newpill" title="${g._ageGpu} GPU listing(s) in the last ${selectedAgeWindow.label}">+${g._ageGpu}</span>` : ""}</td>
-      <td class="num depth ${depthClass(g.pcCount)}">${g.pcCount}</td>
+    <td data-label="GPU" class="mobile-wide overview-model">${escapeHtml(g.term)} <a class="searchlink" href="${escapeAttr(searchUrl(g.term, g.gpuMin, g.gpuMax))}" target="_blank" rel="noopener" title="Open '${escapeAttr(g.term)}' search on Kleinanzeigen" aria-label="Open '${escapeAttr(g.term)}' search on Kleinanzeigen">\u2197</a></td>
+            <td data-label="Score" class="num"${scoreTitle}>${score(g.score)}</td>
+      <td data-label="GPU low / median" class="num">${euro(g.gpuLowest)}${med(g.gpuMedian)}</td>
+            <td data-label="Value" class="num valuecell">${value(g.gpuValue)}${medValue(g.gpuMedianValue)}</td>
+      <td data-label="PC low / median" class="num">${euro(g.pcLowest)}${med(g.pcMedian)}</td>
+      <td data-label="Margin" class="num ${marginClass(g.margin)}">${euro(g.margin)}${warn}${med(g.medianMargin)}</td>
+      <td data-label="Trend" class="num trend">${spark}${delta}</td>
+            <td data-label="GPU ads" class="num depth ${depthClass(g.gpuCount)}">${g.gpuCount}${g._ageGpu ? ` <span class="newpill" title="${g._ageGpu} GPU listing(s) in the last ${selectedAgeWindow.label}">+${g._ageGpu}</span>` : ""}</td>
+      <td data-label="PC ads" class="num depth ${depthClass(g.pcCount)}">${g.pcCount}</td>
     </tr>`;
     }).join("");
 }
@@ -495,13 +572,13 @@ function renderListings() {
         const badge = categoryBadge(l);
         const flags = listingFlags(l);
         return `<tr>
-      <td>${badge}</td>
-        <td>${listingLink(l)}</td>
-      <td class="num">${listingPrice(l)}</td>
-            <td>${flags || '<span class="muted">\u2014</span>'}</td>
-            <td class="num">${listingRoom(l)}</td>
-    <td class="datecell">${listingAgeCell(l)}</td>
-      <td>${escapeHtml(l.city || "")}</td>
+      <td data-label="Type">${badge}</td>
+        <td data-label="Listing" class="mobile-wide">${listingLink(l)}</td>
+      <td data-label="Price" class="num">${listingPrice(l)}</td>
+            <td data-label="Options">${flags || '<span class="muted">\u2014</span>'}</td>
+            <td data-label="Room" class="num">${listingRoom(l)}</td>
+    <td data-label="Posted" class="datecell">${listingAgeCell(l)}</td>
+      <td data-label="City">${escapeHtml(l.city || "")}</td>
     </tr>`;
     }).join("");
 }
@@ -528,16 +605,43 @@ function selectGpu(term) {
 }
 
 overviewBody.addEventListener("click", e => {
-    if (e.target.closest("a")) return;
+    const ignore = e.target.closest("[data-ignore-ad]");
+    if (ignore) {
+        e.preventDefault();
+        ignoreListing(ignore.dataset.ignoreAd).catch(failure => {
+            accountStatus.textContent = failure.message;
+        });
+        return;
+    }
+    if (e.target.closest("a, button")) return;
     const tr = e.target.closest("tr");
     if (tr) selectGpu(tr.dataset.term);
 });
 
 if (newListingsBody) {
     newListingsBody.addEventListener("click", e => {
-        if (e.target.closest("a")) return;
+        const ignore = e.target.closest("[data-ignore-ad]");
+        if (ignore) {
+            e.preventDefault();
+            ignoreListing(ignore.dataset.ignoreAd).catch(failure => {
+                accountStatus.textContent = failure.message;
+            });
+            return;
+        }
+        if (e.target.closest("a, button")) return;
         const tr = e.target.closest("tr[data-term]");
         if (tr) selectGpu(tr.dataset.term);
+    });
+}
+
+if (detailListingsTable) {
+    detailListingsTable.addEventListener("click", e => {
+        const ignore = e.target.closest("[data-ignore-ad]");
+        if (!ignore) return;
+        e.preventDefault();
+        ignoreListing(ignore.dataset.ignoreAd).catch(failure => {
+            accountStatus.textContent = failure.message;
+        });
     });
 }
 
@@ -643,6 +747,7 @@ async function loadSettings() {
     renderKpis();
     renderOverview();
     renderOpportunities();
+    renderWindowNotes();
     renderListings();
     return userSettings;
 }
@@ -746,7 +851,15 @@ async function openSearchConfig() {
 
 if (opportunitiesBody) {
     opportunitiesBody.addEventListener("click", e => {
-        if (e.target.closest("a")) return;
+        const ignore = e.target.closest("[data-ignore-ad]");
+        if (ignore) {
+            e.preventDefault();
+            ignoreListing(ignore.dataset.ignoreAd).catch(failure => {
+                accountStatus.textContent = failure.message;
+            });
+            return;
+        }
+        if (e.target.closest("a, button")) return;
         const row = e.target.closest("tr[data-term]");
         if (row) selectGpu(row.dataset.term);
     });
@@ -756,7 +869,10 @@ if (loginButton) {
     loginButton.addEventListener("click", () => {
         document.querySelector("#loginError").textContent = "";
         loginDialog.showModal();
-        document.querySelector("#loginEmail").focus();
+        requestAnimationFrame(() => {
+            const email = document.querySelector("#loginEmail");
+            if (!email.value) email.focus();
+        });
     });
 }
 
@@ -764,6 +880,18 @@ document.querySelector("#cancelLogin").addEventListener("click", () => loginDial
 document.querySelector("#cancelSettings").addEventListener("click", () => settingsDialog.close());
 settingsButton.addEventListener("click", openSettings);
 searchConfigButton.addEventListener("click", openSearchConfig);
+ignoredButton.addEventListener("click", () => {
+    renderIgnoredListings();
+    ignoredDialog.showModal();
+});
+document.querySelector("#closeIgnored").addEventListener("click", () => ignoredDialog.close());
+document.querySelector("#ignoredListings").addEventListener("click", e => {
+    const restore = e.target.closest("[data-restore-ad]");
+    if (!restore) return;
+    restoreListing(restore.dataset.restoreAd).catch(failure => {
+        document.querySelector("#ignoredError").textContent = failure.message;
+    });
+});
 document.querySelector("#closeSearchConfig").addEventListener("click", () => searchConfigDialog.close());
 document.querySelector("#clearSearchForm").addEventListener("click", clearSearchForm);
 
@@ -784,6 +912,7 @@ loginForm.addEventListener("submit", async e => {
         document.querySelector("#loginPassword").value = "";
         loginDialog.close();
         renderAccount();
+        await reloadMarket();
         await loadSettings();
     } catch (failure) {
         error.textContent = failure.message;
@@ -883,7 +1012,8 @@ logoutButton.addEventListener("click", async () => {
         userSettings = null;
         csrfToken = "";
         renderAccount();
-        renderOpportunities();
+        await reloadMarket();
+        renderAccount();
     } catch (failure) {
         accountStatus.textContent = failure.message;
     }
@@ -895,6 +1025,17 @@ function renderApp() {
     renderNewListings();
     renderOverview();
     renderOpportunities();
+    renderWindowNotes();
+    if (selected) {
+        const model = gpus.find(item => item.term === selected);
+        if (model) {
+            renderChart(model);
+            renderListings();
+        } else {
+            selected = null;
+            detail.classList.add("hidden");
+        }
+    }
 }
 
 async function initialize() {
@@ -902,6 +1043,8 @@ async function initialize() {
         try {
             const marketData = await apiRequest("api/market.php");
             gpus = marketData.models || [];
+            ignoredListings = marketData.ignoredListings || [];
+            ignoreAvailable = marketData.ignoreAvailable !== false;
             if (marketData.updated) {
                 const updated = new Date(marketData.updated);
                 document.querySelector("#updated").textContent = Number.isNaN(updated.getTime())
